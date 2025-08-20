@@ -29,23 +29,33 @@ export class WordsService {
     const now = new Date();
     const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
 
+    let words: WordPair[];
+
     if (
       user.cachedWords &&
       user.cachedWords.lastUpdated &&
       user.cachedWords.lastUpdated > oneHourAgo
     ) {
       this.logger.log(`Використовуємо кешовані дані для користувача ${telegramId}`);
-      return user.cachedWords.words;
+      words = user.cachedWords.words;
+    } else {
+      // Завантажуємо свіжі дані з Google Sheets
+      this.logger.log(`Завантажуємо свіжі дані для користувача ${telegramId}`);
+      words = await this.googleSheetsService.extractWordsFromSheet(user.googleSheetsUrl);
+      
+      // Зберігаємо в кеш
+      await this.userService.updateCachedWords(telegramId, words);
     }
 
-    // Завантажуємо свіжі дані з Google Sheets
-    this.logger.log(`Завантажуємо свіжі дані для користувача ${telegramId}`);
-    const words = await this.googleSheetsService.extractWordsFromSheet(user.googleSheetsUrl);
+    // Фільтруємо локально вивчені слова
+    const learnedWords = user.learnedWords || [];
+    const filteredWords = words.filter(word => 
+      !learnedWords.includes(word.english.toLowerCase())
+    );
+
+    this.logger.log(`Відфільтровано ${words.length - filteredWords.length} локально вивчених слів`);
     
-    // Зберігаємо в кеш
-    await this.userService.updateCachedWords(telegramId, words);
-    
-    return words;
+    return filteredWords;
   }
 
   /**

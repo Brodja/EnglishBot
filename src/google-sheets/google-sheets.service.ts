@@ -39,10 +39,10 @@ export class GoogleSheetsService {
 
       this.logger.log(`Витягуємо дані з таблиці: ${sheetId}`);
 
-      // Отримуємо дані з колонок B (англійські слова) та D (переклади)
+      // Отримуємо дані з колонок B до F (англійські слова, транскрипція, переклади, приклади, маркер вивчених)
       const response = await this.sheets.spreadsheets.values.get({
         spreadsheetId: sheetId,
-        range: 'B:D', // Беремо колонки B, C, D щоб точно захопити потрібні дані
+        range: 'B:F', // Беремо колонки B, C, D, E, F
       });
 
       const rows = response.data.values || [];
@@ -53,10 +53,16 @@ export class GoogleSheetsService {
         const row = rows[i];
         if (row && row.length >= 1) {
           const english = row[0]?.trim(); // Колонка B (індекс 0)
+          const transcription = row[1]?.trim(); // Колонка C (індекс 1) - транскрипція
           const translation = row[2]?.trim() || '[переклад відсутній]'; // Колонка D (індекс 2)
+          const example = row[3]?.trim(); // Колонка E (індекс 3) - приклади
+          const learned = row[4]?.trim(); // Колонка F (індекс 4) - маркер вивчених слів
 
-          if (english) {
+          // Якщо в колонці F є будь-який текст - слово вивчене, ігноруємо його
+          if (english && !learned) {
             wordPairs.push({ english, translation });
+          } else if (english && learned) {
+            this.logger.log(`Пропускаємо вивчене слово: ${english} (маркер: "${learned}")`);
           }
         }
       }

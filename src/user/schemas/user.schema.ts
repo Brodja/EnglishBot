@@ -34,6 +34,9 @@ export class User {
     englishShown: number[];
     translationShown: number[];
   };
+
+  @Prop({ type: [String], default: [] })
+  learnedWords?: string[]; // Список вивчених англійських слів
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);

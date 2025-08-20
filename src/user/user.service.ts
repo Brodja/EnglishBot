@@ -77,4 +77,25 @@ export class UserService {
       { new: true }
     ).exec();
   }
+
+  async addLearnedWord(telegramId: number, word: string): Promise<UserDocument> {
+    return this.userModel.findOneAndUpdate(
+      { telegramId },
+      { $addToSet: { learnedWords: word.toLowerCase() } }, // $addToSet не додає дублікати
+      { new: true, upsert: true }
+    ).exec();
+  }
+
+  async removeLearnedWord(telegramId: number, word: string): Promise<UserDocument> {
+    return this.userModel.findOneAndUpdate(
+      { telegramId },
+      { $pull: { learnedWords: word.toLowerCase() } },
+      { new: true }
+    ).exec();
+  }
+
+  async getLearnedWords(telegramId: number): Promise<string[]> {
+    const user = await this.userModel.findOne({ telegramId }).exec();
+    return user?.learnedWords || [];
+  }
 }

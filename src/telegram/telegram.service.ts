@@ -5,7 +5,7 @@ import { BotContext } from './interfaces/bot-context.interface';
 import { UserService } from '../user/user.service';
 import { GoogleSheetsService } from '../google-sheets/google-sheets.service';
 import { WordsService } from './services/words.service';
-import { mainMenuKeyboard, learningMenuKeyboard } from './keyboards/main-menu.keyboard';
+import { mainMenuKeyboard, learningMenuKeyboard, learnedWordsKeyboard } from './keyboards/main-menu.keyboard';
 
 @Injectable()
 export class TelegramService implements OnModuleInit {
@@ -105,7 +105,8 @@ export class TelegramService implements OnModuleInit {
           `Переконайтеся що:\n` +
           `• Таблиця доступна для перегляду\n` +
           `• Англійські слова знаходяться в колонці B\n` +
-          `• Переклади знаходяться в колонці D (можуть бути пустими)`
+          `• Переклади знаходяться в колонці D\n` +
+          `• Колонка F - маркер вивчених слів (якщо є текст - слово ігнорується)`
         );
       }
       
@@ -118,10 +119,18 @@ export class TelegramService implements OnModuleInit {
       try {
         const result = await this.wordsService.getRandomEnglishWord(ctx.from.id);
         
+        const inlineKeyboard = {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '✅ Вивчено', callback_data: `learned_${result.word}` }]
+            ]
+          }
+        };
+        
         await ctx.reply(
           `🇺🇸 *${this.escapeMarkdownV2(result.word)}*\n\n` +
           `🇺🇦 ||${this.escapeMarkdownV2(result.translation)}||`,
-          { parse_mode: 'MarkdownV2' }
+          { parse_mode: 'MarkdownV2', ...inlineKeyboard }
         );
       } catch (error) {
         await ctx.reply(
@@ -135,10 +144,18 @@ export class TelegramService implements OnModuleInit {
       try {
         const result = await this.wordsService.getRandomTranslation(ctx.from.id);
         
+        const inlineKeyboard = {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '✅ Вивчено', callback_data: `learned_${result.word}` }]
+            ]
+          }
+        };
+        
         await ctx.reply(
           `🇺🇦 *${this.escapeMarkdownV2(result.translation)}*\n\n` +
           `🇺🇸 ||${this.escapeMarkdownV2(result.word)}||`,
-          { parse_mode: 'MarkdownV2' }
+          { parse_mode: 'MarkdownV2', ...inlineKeyboard }
         );
       } catch (error) {
         await ctx.reply(
@@ -146,6 +163,75 @@ export class TelegramService implements OnModuleInit {
           learningMenuKeyboard()
         );
       }
+    });
+
+    this.bot.hears('📚 Керувати вивченими словами', async (ctx) => {
+      const learnedWords = await this.userService.getLearnedWords(ctx.from.id);
+      
+      await ctx.reply(
+        `📚 Керування вивченими словами\n\n` +
+        `У вас ${learnedWords.length} вивчених слів`,
+        learnedWordsKeyboard()
+      );
+    });
+
+    this.bot.hears('📋 Показати вивчені слова', async (ctx) => {
+      const learnedWords = await this.userService.getLearnedWords(ctx.from.id);
+      
+      if (learnedWords.length === 0) {
+        await ctx.reply(
+          '📋 У вас немає вивчених слів',
+          learnedWordsKeyboard()
+        );
+        return;
+      }
+
+      const wordsText = learnedWords.map((word, index) => `${index + 1}. ${word}`).join('\n');
+      
+      await ctx.reply(
+        `📋 Ваші вивчені слова (${learnedWords.length}):\n\n${wordsText}`,
+        learnedWordsKeyboard()
+      );
+    });
+
+    this.bot.hears('🗑️ Видалити вивчені слова', async (ctx) => {
+      const learnedWords = await this.userService.getLearnedWords(ctx.from.id);
+      
+      if (learnedWords.length === 0) {
+        await ctx.reply(
+          '📋 У вас немає вивчених слів для видалення',
+          learnedWordsKeyboard()
+        );
+        return;
+      }
+
+      // Створюємо inline клавіатуру зі словами для видалення
+      const keyboard = [];
+      for (let i = 0; i < learnedWords.length; i += 2) {
+        const row = [];
+        row.push({ text: `❌ ${learnedWords[i]}`, callback_data: `remove_${learnedWords[i]}` });
+        if (learnedWords[i + 1]) {
+          row.push({ text: `❌ ${learnedWords[i + 1]}`, callback_data: `remove_${learnedWords[i + 1]}` });
+        }
+        keyboard.push(row);
+      }
+      keyboard.push([{ text: '🗑️ Очистити все', callback_data: 'clear_all_learned' }]);
+      keyboard.push([{ text: '⬅️ Назад', callback_data: 'back_to_learned_menu' }]);
+
+      await ctx.reply(
+        '🗑️ Виберіть слова для видалення:',
+        { reply_markup: { inline_keyboard: keyboard } }
+      );
+    });
+
+    this.bot.hears('⬅️ Назад до навчання', async (ctx) => {
+      await ctx.reply(
+        '📖 Меню навчання:\n\n' +
+        '🇺🇸 Отримати англійське слово\n' +
+        '🇺🇦 Отримати переклад\n\n' +
+        '💡 Натисніть на заблюрений текст, щоб його розкрити!',
+        learningMenuKeyboard()
+      );
     });
 
     this.bot.hears('⬅️ Назад', async (ctx) => {
@@ -207,7 +293,8 @@ export class TelegramService implements OnModuleInit {
             `Переконайтеся що:\n` +
             `• Таблиця доступна для перегляду\n` +
             `• Посилання правильне\n` +
-            `• В таблиці є англійські слова в колонці B`
+            `• В таблиці є англійські слова в колонці B\n` +
+            `• Колонка F порожня для слів, які хочете вивчати`
           );
         }
       } else {
@@ -215,6 +302,74 @@ export class TelegramService implements OnModuleInit {
           'Використовуйте кнопки меню для навігації 👇',
           mainMenuKeyboard()
         );
+      }
+    });
+
+    // Обробка inline кнопок
+    this.bot.on('callback_query', async (ctx) => {
+      if (!('data' in ctx.callbackQuery)) return;
+      const data = ctx.callbackQuery.data;
+      
+      if (data.startsWith('learned_')) {
+        // Додаємо слово до вивчених
+        const word = data.replace('learned_', '');
+        await this.userService.addLearnedWord(ctx.from.id, word);
+        
+        await ctx.editMessageReplyMarkup({
+          inline_keyboard: [
+            [{ text: '✅ Додано до вивчених!', callback_data: 'word_learned' }]
+          ]
+        });
+        
+        await ctx.answerCbQuery(`✅ Слово "${word}" додано до вивчених!`);
+      } else if (data.startsWith('remove_')) {
+        // Видаляємо слово з вивчених
+        const word = data.replace('remove_', '');
+        await this.userService.removeLearnedWord(ctx.from.id, word);
+        await ctx.answerCbQuery(`🗑️ Слово "${word}" видалено з вивчених!`);
+        
+        // Оновлюємо список
+        const learnedWords = await this.userService.getLearnedWords(ctx.from.id);
+        if (learnedWords.length === 0) {
+          await ctx.editMessageText('📋 Всі слова видалено!');
+          return;
+        }
+        
+        // Перебудовуємо клавіатуру
+        const keyboard = [];
+        for (let i = 0; i < learnedWords.length; i += 2) {
+          const row = [];
+          row.push({ text: `❌ ${learnedWords[i]}`, callback_data: `remove_${learnedWords[i]}` });
+          if (learnedWords[i + 1]) {
+            row.push({ text: `❌ ${learnedWords[i + 1]}`, callback_data: `remove_${learnedWords[i + 1]}` });
+          }
+          keyboard.push(row);
+        }
+        keyboard.push([{ text: '🗑️ Очистити все', callback_data: 'clear_all_learned' }]);
+        keyboard.push([{ text: '⬅️ Назад', callback_data: 'back_to_learned_menu' }]);
+
+        await ctx.editMessageReplyMarkup({ inline_keyboard: keyboard });
+      } else if (data === 'clear_all_learned') {
+        // Очищуємо всі вивчені слова
+        const user = await this.userService.findByTelegramId(ctx.from.id);
+        if (user) {
+          user.learnedWords = [];
+          await user.save();
+        }
+        
+        await ctx.editMessageText('🗑️ Всі вивчені слова очищено!');
+        await ctx.answerCbQuery('✅ Всі слова видалено!');
+      } else if (data === 'back_to_learned_menu') {
+        await ctx.deleteMessage();
+        const learnedWords = await this.userService.getLearnedWords(ctx.from.id);
+        
+        await ctx.reply(
+          `📚 Керування вивченими словами\n\n` +
+          `У вас ${learnedWords.length} вивчених слів`,
+          learnedWordsKeyboard()
+        );
+      } else if (data === 'word_learned') {
+        await ctx.answerCbQuery('Слово вже додано!');
       }
     });
 
