@@ -5,7 +5,7 @@ import { ThrottlerModule } from '@nestjs/throttler';
 import configuration from './config/configuration';
 import { TelegramModule } from './telegram/telegram.module';
 import { UserModule } from './user/user.module';
-import { GoogleSheetsModule } from './google-sheets/google-sheets.module';
+import { RoomModule } from './room/room.module';
 
 @Module({
   imports: [
@@ -28,7 +28,7 @@ import { GoogleSheetsModule } from './google-sheets/google-sheets.module';
     ]),
     TelegramModule,
     UserModule,
-    GoogleSheetsModule,
+    RoomModule,
   ],
 })
 export class AppModule {}

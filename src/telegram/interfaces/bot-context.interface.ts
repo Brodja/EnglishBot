@@ -2,7 +2,12 @@ import { Context } from 'telegraf';
 
 export interface BotContext extends Context {
   session?: {
-    awaitingSheetUrl?: boolean;
-    currentMenu?: 'main' | 'learning';
+    awaitingRoomName?: boolean;
+    awaitingDisplayName?: boolean;
+    awaitingGiftDescription?: boolean;
+    currentRoomId?: string;
+    isNameChange?: boolean;
+    isJoiningRoom?: boolean;
+    tempDisplayName?: string;
   };
 }

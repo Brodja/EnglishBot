@@ -18,25 +18,19 @@ export class User {
   username?: string;
 
   @Prop()
-  googleSheetsUrl?: string;
+  displayName?: string; // Ім'я для показу в кімнаті
 
-  @Prop({ type: Date })
-  lastDataUpdate?: Date;
+  @Prop()
+  currentRoomId?: string; // ID поточної кімнати
 
-  @Prop({ type: Object })
-  cachedWords?: {
-    words: Array<{ english: string; translation: string }>;
-    lastUpdated: Date;
-  };
+  @Prop()
+  giftDescription?: string; // Опис бажаного подарунку
 
-  @Prop({ type: Object })
-  progress?: {
-    englishShown: number[];
-    translationShown: number[];
-  };
+  @Prop()
+  assignedTo?: number; // Telegram ID того, кому дарувати (після розподілу)
 
-  @Prop({ type: [String], default: [] })
-  learnedWords?: string[]; // Список вивчених англійських слів
+  @Prop({ type: [Number], default: [] })
+  ignoreList?: number[]; // Список Telegram ID, яких ігнорувати при розподілі
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);

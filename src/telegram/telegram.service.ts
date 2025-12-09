@@ -3,25 +3,21 @@ import { ConfigService } from '@nestjs/config';
 import { Telegraf, session } from 'telegraf';
 import { BotContext } from './interfaces/bot-context.interface';
 import { UserService } from '../user/user.service';
-import { GoogleSheetsService } from '../google-sheets/google-sheets.service';
-import { WordsService } from './services/words.service';
-import { mainMenuKeyboard, learningMenuKeyboard, learnedWordsKeyboard } from './keyboards/main-menu.keyboard';
+import { RoomService } from '../room/room.service';
+import { AssignmentService } from './services/assignment.service';
+import { RoomStatus } from '../room/schemas/room.schema';
+import { mainMenuKeyboard, adminMenuKeyboard, userMenuKeyboard } from './keyboards/main-menu.keyboard';
 
 @Injectable()
 export class TelegramService implements OnModuleInit {
   private readonly logger = new Logger(TelegramService.name);
   private bot: Telegraf<BotContext>;
 
-  // Допоміжна функція для екранування спеціальних символів в MarkdownV2
-  private escapeMarkdownV2(text: string): string {
-    return text.replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
-  }
-
   constructor(
     private readonly configService: ConfigService,
     private readonly userService: UserService,
-    private readonly googleSheetsService: GoogleSheetsService,
-    private readonly wordsService: WordsService,
+    private readonly roomService: RoomService,
+    private readonly assignmentService: AssignmentService,
   ) {
     const token = this.configService.get<string>('telegram.apiKey');
     if (!token) {
@@ -38,9 +34,9 @@ export class TelegramService implements OnModuleInit {
   async onModuleInit() {
     try {
       await this.bot.launch();
-      this.logger.log('🤖 Telegram bot started successfully');
+      this.logger.log('🎅 Secret Santa bot started successfully');
     } catch (error) {
-      this.logger.error('Failed to start Telegram bot:', error);
+      this.logger.error('Failed to start Secret Santa bot:', error);
     }
   }
 
@@ -49,6 +45,13 @@ export class TelegramService implements OnModuleInit {
     this.bot.start(async (ctx) => {
       const user = ctx.from;
       if (!user) return;
+
+      // Перевіряємо чи це приєднання до кімнати
+      const startPayload = ctx.startPayload;
+      if (startPayload) {
+        await this.handleJoinRoom(ctx, startPayload);
+        return;
+      }
 
       // Створюємо або знаходимо користувача
       let dbUser = await this.userService.findByTelegramId(user.id);
@@ -62,241 +65,402 @@ export class TelegramService implements OnModuleInit {
       }
 
       await ctx.reply(
-        `Привіт, ${user.first_name}! 👋\n\n` +
-        `Я бот для вивчення англійських слів з Google Sheets.\n\n` +
-        `Спочатку додайте посилання на вашу таблицю, а потім можете почати навчання!`,
+        `Хоу-хоу-хоу! 🎅\n\n` +
+        `Привіт, ${user.first_name}! Я бот для гри "Таємний Санта".\n\n` +
+        `🎁 Створи кімнату та запроси друзів\n` +
+        `🎲 Я зроблю випадковий розподіл\n` +
+        `🤫 Кожен дізнається кому дарувати`,
         mainMenuKeyboard()
       );
     });
 
-    // Обробка кнопок головного меню
-    this.bot.hears('📚 Перейти до навчання', async (ctx) => {
-      const user = await this.userService.findByTelegramId(ctx.from.id);
-      this.logger.log(`Користувач ${ctx.from.id} хоче перейти до навчання. Користувач знайдений: ${!!user}, URL: ${user?.googleSheetsUrl || 'відсутній'}`);
-      
-      if (!user?.googleSheetsUrl) {
+    // Створення кімнати
+    this.bot.hears('🎅 Створити кімнату', async (ctx) => {
+      // Перевіряємо чи користувач вже в кімнаті
+      const existingRoom = await this.roomService.findUserRoom(ctx.from.id);
+      if (existingRoom) {
         await ctx.reply(
-          '❌ Спочатку додайте посилання на Google Sheets таблицю!',
+          `❌ Ви вже знаходитесь в кімнаті "${existingRoom.name}" (#${existingRoom.roomId})\n\n` +
+          `Спочатку покиньте поточну кімнату або перейдіть до управління нею.`,
           mainMenuKeyboard()
         );
         return;
       }
 
       await ctx.reply(
-        '📖 Меню навчання:\n\n' +
-        '🇺🇸 Отримати англійське слово\n' +
-        '🇺🇦 Отримати переклад\n\n' +
-        '💡 Натисніть на заблюрений текст, щоб його розкрити!',
-        learningMenuKeyboard()
+        '🎅 Як тебе представити в кімнаті?\n\n' +
+        'Напиши своє ім\'я або псевдонім, щоб учасники знали, хто ти:'
       );
-    });
-
-    this.bot.hears('🔗 Додати посилання', async (ctx) => {
-      const user = await this.userService.findByTelegramId(ctx.from.id);
       
-      if (user?.googleSheetsUrl) {
-        await ctx.reply(
-          `📋 Ваше поточне посилання:\n${user.googleSheetsUrl}\n\n` +
-          `Надішліть нове посилання на Google Sheets для оновлення:`
-        );
-      } else {
-        await ctx.reply(
-          `📋 Надішліть посилання на вашу Google Sheets таблицю.\n\n` +
-          `Переконайтеся що:\n` +
-          `• Таблиця доступна для перегляду\n` +
-          `• Англійські слова знаходяться в колонці B\n` +
-          `• Переклади знаходяться в колонці D\n` +
-          `• Колонка F - маркер вивчених слів (якщо є текст - слово ігнорується)`
-        );
-      }
-      
-      ctx.session = { awaitingSheetUrl: true };
-      this.logger.log(`Встановлено сесію для користувача ${ctx.from.id}: awaitingSheetUrl = true`);
+      ctx.session = { awaitingDisplayName: true };
     });
 
-    // Обробка кнопок меню навчання
-    this.bot.hears('🇺🇸 Отримати англійське слово', async (ctx) => {
-      try {
-        const result = await this.wordsService.getRandomEnglishWord(ctx.from.id);
-        
-        const inlineKeyboard = {
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: '✅ Вивчено', callback_data: `learned_${result.word}` }]
-            ]
-          }
-        };
-        
-        await ctx.reply(
-          `🇺🇸 *${this.escapeMarkdownV2(result.word)}*\n\n` +
-          `🇺🇦 ||${this.escapeMarkdownV2(result.translation)}||`,
-          { parse_mode: 'MarkdownV2', ...inlineKeyboard }
-        );
-      } catch (error) {
-        await ctx.reply(
-          `❌ Помилка: ${error.message}`,
-          learningMenuKeyboard()
-        );
-      }
-    });
-
-    this.bot.hears('🇺🇦 Отримати переклад', async (ctx) => {
-      try {
-        const result = await this.wordsService.getRandomTranslation(ctx.from.id);
-        
-        const inlineKeyboard = {
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: '✅ Вивчено', callback_data: `learned_${result.word}` }]
-            ]
-          }
-        };
-        
-        await ctx.reply(
-          `🇺🇦 *${this.escapeMarkdownV2(result.translation)}*\n\n` +
-          `🇺🇸 ||${this.escapeMarkdownV2(result.word)}||`,
-          { parse_mode: 'MarkdownV2', ...inlineKeyboard }
-        );
-      } catch (error) {
-        await ctx.reply(
-          `❌ Помилка: ${error.message}`,
-          learningMenuKeyboard()
-        );
-      }
-    });
-
-    this.bot.hears('📚 Керувати вивченими словами', async (ctx) => {
-      const learnedWords = await this.userService.getLearnedWords(ctx.from.id);
-      
+    // Приєднання до кімнати
+    this.bot.hears('🎁 Приєднатися до кімнати', async (ctx) => {
       await ctx.reply(
-        `📚 Керування вивченими словами\n\n` +
-        `У вас ${learnedWords.length} вивчених слів`,
-        learnedWordsKeyboard()
+        '🎁 Щоб приєднатися до кімнати, перейдіть за посиланням від адміністратора.\n\n' +
+        'Посилання має вигляд: t.me/botname?start=123456'
       );
     });
 
-    this.bot.hears('📋 Показати вивчені слова', async (ctx) => {
-      const learnedWords = await this.userService.getLearnedWords(ctx.from.id);
+    // Моя кімната
+    this.bot.hears('🏠 Моя кімната', async (ctx) => {
+      const room = await this.roomService.findUserRoom(ctx.from.id);
       
-      if (learnedWords.length === 0) {
+      if (!room) {
         await ctx.reply(
-          '📋 У вас немає вивчених слів',
-          learnedWordsKeyboard()
+          '❌ Ви не знаходитесь в жодній кімнаті.\n\n' +
+          'Створіть нову кімнату або приєднайтеся до існуючої.',
+          mainMenuKeyboard()
         );
         return;
       }
 
-      const wordsText = learnedWords.map((word, index) => `${index + 1}. ${word}`).join('\n');
-      
+      const isAdmin = room.adminId === ctx.from.id;
+      const statusText = room.status === RoomStatus.WAITING ? '⏳ Очікування' : 
+                        room.status === RoomStatus.ACTIVE ? '🎮 Активна' : '✅ Завершена';
+
       await ctx.reply(
-        `📋 Ваші вивчені слова (${learnedWords.length}):\n\n${wordsText}`,
-        learnedWordsKeyboard()
+        `🏠 Кімната: ${room.name}\n` +
+        `🆔 ID: #${room.roomId}\n` +
+        `📊 Статус: ${statusText}\n` +
+        `👥 Учасників: ${room.participants.length}\n` +
+        `👑 Адмін: ${isAdmin ? 'Ви' : 'Інший користувач'}`,
+        isAdmin ? adminMenuKeyboard() : userMenuKeyboard()
       );
     });
 
-    this.bot.hears('🗑️ Видалити вивчені слова', async (ctx) => {
-      const learnedWords = await this.userService.getLearnedWords(ctx.from.id);
-      
-      if (learnedWords.length === 0) {
-        await ctx.reply(
-          '📋 У вас немає вивчених слів для видалення',
-          learnedWordsKeyboard()
-        );
+    // === АДМІН МЕНЮ ===
+
+    // Перегляд учасників
+    this.bot.hears('👥 Перегляд учасників', async (ctx) => {
+      const room = await this.roomService.findUserRoom(ctx.from.id);
+      if (!room || room.adminId !== ctx.from.id) {
+        await ctx.reply('❌ Ви не є адміністратором кімнати.', mainMenuKeyboard());
         return;
       }
 
-      // Створюємо inline клавіатуру зі словами для видалення
+      const users = await this.userService.findMultipleByTelegramIds(room.participants);
+      
+      // Створюємо мапу користувачів для швидкого пошуку
+      const userMap = new Map(users.map(user => [user.telegramId, user]));
+      
+      const userList = users.map((user, index) => {
+        const name = user.displayName || user.firstName || 'Без імені';
+        const username = user.username ? `@${user.username}` : '';
+        const isAdmin = user.telegramId === room.adminId ? '👑' : '';
+        
+        // Формуємо список ігнорованих користувачів
+        let ignoreInfo = '';
+        if (user.ignoreList && user.ignoreList.length > 0) {
+          const ignoredNames = user.ignoreList
+            .map(ignoredId => {
+              const ignoredUser = userMap.get(ignoredId);
+              return ignoredUser?.displayName || ignoredUser?.firstName || `ID:${ignoredId}`;
+            })
+            .join(', ');
+          ignoreInfo = ` (ігнорує: ${ignoredNames})`;
+        }
+        
+        return `${index + 1}. ${name} ${username} ${isAdmin}${ignoreInfo}`;
+      }).join('\n');
+
+      await ctx.reply(
+        `👥 Учасники кімнати "${room.name}":\n\n${userList}`,
+        adminMenuKeyboard()
+      );
+    });
+
+    // Посилання на кімнату
+    this.bot.hears('🔗 Посилання на кімнату', async (ctx) => {
+      const room = await this.roomService.findUserRoom(ctx.from.id);
+      if (!room || room.adminId !== ctx.from.id) {
+        await ctx.reply('❌ Ви не є адміністратором кімнати.', mainMenuKeyboard());
+        return;
+      }
+
+      const botUsername = this.bot.botInfo?.username || 'bot';
+      const inviteLink = `t.me/${botUsername}?start=${room.roomId}`;
+
+      await ctx.reply(
+        `🔗 Посилання для запрошення:\n\n` +
+        `${inviteLink}\n\n` +
+        `Надішліть це посилання друзям, щоб вони могли приєднатися до кімнати.`,
+        adminMenuKeyboard()
+      );
+    });
+
+    // Керування ігнор-листами
+    this.bot.hears('🚫 Керувати ігнор-листами', async (ctx) => {
+      const room = await this.roomService.findUserRoom(ctx.from.id);
+      if (!room || room.adminId !== ctx.from.id) {
+        await ctx.reply('❌ Ви не є адміністратором кімнати.', mainMenuKeyboard());
+        return;
+      }
+
+      const users = await this.userService.findMultipleByTelegramIds(room.participants);
+      
+      if (users.length < 2) {
+        await ctx.reply('❌ Потрібно мінімум 2 учасники для налаштування ігнор-листів.', adminMenuKeyboard());
+        return;
+      }
+
+      // Створюємо inline клавіатуру з учасниками
       const keyboard = [];
-      for (let i = 0; i < learnedWords.length; i += 2) {
+      for (let i = 0; i < users.length; i += 2) {
         const row = [];
-        row.push({ text: `❌ ${learnedWords[i]}`, callback_data: `remove_${learnedWords[i]}` });
-        if (learnedWords[i + 1]) {
-          row.push({ text: `❌ ${learnedWords[i + 1]}`, callback_data: `remove_${learnedWords[i + 1]}` });
+        const user1 = users[i];
+        const name1 = user1.displayName || user1.firstName || 'Без імені';
+        row.push({ text: `👤 ${name1}`, callback_data: `manage_ignore_${user1.telegramId}` });
+        
+        if (users[i + 1]) {
+          const user2 = users[i + 1];
+          const name2 = user2.displayName || user2.firstName || 'Без імені';
+          row.push({ text: `👤 ${name2}`, callback_data: `manage_ignore_${user2.telegramId}` });
         }
         keyboard.push(row);
       }
-      keyboard.push([{ text: '🗑️ Очистити все', callback_data: 'clear_all_learned' }]);
-      keyboard.push([{ text: '⬅️ Назад', callback_data: 'back_to_learned_menu' }]);
+      keyboard.push([{ text: '⬅️ Назад', callback_data: 'back_to_admin_menu' }]);
 
       await ctx.reply(
-        '🗑️ Виберіть слова для видалення:',
+        '🚫 Керування ігнор-листами\n\n' +
+        'Виберіть учасника, для якого хочете налаштувати ігнор-лист:',
         { reply_markup: { inline_keyboard: keyboard } }
       );
     });
 
-    this.bot.hears('⬅️ Назад до навчання', async (ctx) => {
+    // Запуск розподілу
+    this.bot.hears('🎲 Запустити розподіл', async (ctx) => {
+      const room = await this.roomService.findUserRoom(ctx.from.id);
+      if (!room || room.adminId !== ctx.from.id) {
+        await ctx.reply('❌ Ви не є адміністратором кімнати.', mainMenuKeyboard());
+        return;
+      }
+
+      if (room.status !== RoomStatus.WAITING) {
+        await ctx.reply('❌ Розподіл вже було зроблено.', adminMenuKeyboard());
+        return;
+      }
+
+      if (room.participants.length < 3) {
+        await ctx.reply('❌ Для гри потрібно мінімум 3 учасники.', adminMenuKeyboard());
+        return;
+      }
+
+      try {
+        // Повідомляємо про початок розподілу
+        const statusMessage = await ctx.reply(
+          '🎲 Створюю розподіл...\n\n' +
+          '⏳ Аналізую ігнор-листи та шукаю оптимальний варіант...'
+        );
+
+        const result = await this.assignmentService.createAssignments(room.participants);
+        
+        if (!result.success) {
+          await ctx.telegram.editMessageText(
+            ctx.chat.id,
+            statusMessage.message_id,
+            undefined,
+            `❌ Розподіл неможливий!\n\n` +
+            `${result.error}\n\n` +
+            `Спроб зроблено: ${result.attempts || 0}`
+          );
+          
+          // Через 3 секунди пропонуємо спробувати ще раз
+          setTimeout(async () => {
+            await ctx.reply(
+              '🔄 Хочете спробувати ще раз?\n\n' +
+              'Можливо варто:\n' +
+              '• Змінити ігнор-листи\n' +
+              '• Додати більше учасників\n' +
+              '• Або просто спробувати ще раз',
+              adminMenuKeyboard()
+            );
+          }, 3000);
+          return;
+        }
+
+        // Успішний розподіл
+        await ctx.telegram.editMessageText(
+          ctx.chat.id,
+          statusMessage.message_id,
+          undefined,
+          `✅ Розподіл знайдено!\n\n` +
+          `🎯 Спроб потрібно було: ${result.attempts}\n` +
+          `⏳ Зберігаю результати та надсилаю повідомлення...`
+        );
+
+        // Зберігаємо розподіл
+        await this.roomService.startGame(room.roomId, result.assignment!);
+
+        // Зберігаємо призначення для кожного користувача
+        for (const [giverId, receiverId] of Object.entries(result.assignment!)) {
+          await this.userService.setAssignment(parseInt(giverId), receiverId);
+        }
+
+        // Надсилаємо повідомлення всім учасникам
+        await this.notifyParticipants(room.participants, result.assignment!);
+
+        // Оновлюємо статус повідомлення
+        await ctx.telegram.editMessageText(
+          ctx.chat.id,
+          statusMessage.message_id,
+          undefined,
+          `🎉 Розподіл завершено!\n\n` +
+          `✅ Всі ${room.participants.length} учасників отримали повідомлення\n` +
+          `🎯 Спроб потрібно було: ${result.attempts}\n\n` +
+          `🤫 Гра почалася! Тримайте призначення в секреті!`
+        );
+
+      } catch (error) {
+        this.logger.error('Error creating assignments:', error);
+        await ctx.reply(
+          '❌ Технічна помилка при створенні розподілу.\n\n' +
+          'Спробуйте ще раз через кілька секунд.',
+          adminMenuKeyboard()
+        );
+      }
+    });
+
+    // === USER МЕНЮ ===
+
+    // Список учасників (для звичайних користувачів)
+    this.bot.hears('👥 Список учасників', async (ctx) => {
+      const room = await this.roomService.findUserRoom(ctx.from.id);
+      if (!room) {
+        await ctx.reply('❌ Ви не знаходитесь в кімнаті.', mainMenuKeyboard());
+        return;
+      }
+
+      const users = await this.userService.findMultipleByTelegramIds(room.participants);
+      const userList = users.map((user, index) => {
+        const name = user.displayName || user.firstName || 'Без імені';
+        const username = user.username ? `@${user.username}` : '';
+        const isAdmin = user.telegramId === room.adminId ? '👑' : '';
+        const isMe = user.telegramId === ctx.from.id ? '(ви)' : '';
+        
+        return `${index + 1}. ${name} ${username} ${isAdmin} ${isMe}`.trim();
+      }).join('\n');
+
+      const statusText = room.status === RoomStatus.WAITING ? '⏳ Очікування' : 
+                        room.status === RoomStatus.ACTIVE ? '🎮 Активна' : '✅ Завершена';
+
       await ctx.reply(
-        '📖 Меню навчання:\n\n' +
-        '🇺🇸 Отримати англійське слово\n' +
-        '🇺🇦 Отримати переклад\n\n' +
-        '💡 Натисніть на заблюрений текст, щоб його розкрити!',
-        learningMenuKeyboard()
+        `👥 Учасники кімнати "${room.name}":\n` +
+        `📊 Статус: ${statusText}\n\n` +
+        `${userList}`,
+        userMenuKeyboard()
       );
     });
 
-    this.bot.hears('⬅️ Назад', async (ctx) => {
+    // Редагування опису подарунку
+    this.bot.hears('🎁 Редагувати опис подарунку', async (ctx) => {
+      const room = await this.roomService.findUserRoom(ctx.from.id);
+      if (!room) {
+        await ctx.reply('❌ Ви не знаходитесь в кімнаті.', mainMenuKeyboard());
+        return;
+      }
+
+      const user = await this.userService.findByTelegramId(ctx.from.id);
+      const currentDescription = user?.giftDescription || 'Не вказано';
+
       await ctx.reply(
-        'Головне меню:',
+        `🎁 Поточний опис подарунку:\n${currentDescription}\n\n` +
+        'Напишіть новий опис того, що ви хочете отримати:'
+      );
+
+      ctx.session = { awaitingGiftDescription: true };
+    });
+
+    // Змінити ім'я
+    this.bot.hears('👤 Змінити ім\'я', async (ctx) => {
+      const room = await this.roomService.findUserRoom(ctx.from.id);
+      if (!room) {
+        await ctx.reply('❌ Ви не знаходитесь в кімнаті.', mainMenuKeyboard());
+        return;
+      }
+
+      const user = await this.userService.findByTelegramId(ctx.from.id);
+      const currentName = user?.displayName || user?.firstName || 'Не вказано';
+
+      await ctx.reply(
+        `👤 Поточне ім'я: ${currentName}\n\n` +
+        'Напишіть нове ім\'я:'
+      );
+
+      ctx.session = { awaitingDisplayName: true, isNameChange: true };
+    });
+
+    // Покинути кімнату
+    this.bot.hears('🚪 Покинути кімнату', async (ctx) => {
+      const room = await this.roomService.findUserRoom(ctx.from.id);
+      if (!room) {
+        await ctx.reply('❌ Ви не знаходитесь в кімнаті.', mainMenuKeyboard());
+        return;
+      }
+
+      if (room.adminId === ctx.from.id) {
+        await ctx.reply(
+          '❌ Адміністратор не може покинути кімнату.\n\n' +
+          'Видаліть кімнату або передайте права адміністратора іншому учаснику.',
+          adminMenuKeyboard()
+        );
+        return;
+      }
+
+      await this.roomService.removeParticipant(room.roomId, ctx.from.id);
+      await this.userService.clearCurrentRoom(ctx.from.id);
+
+      await ctx.reply(
+        `✅ Ви покинули кімнату "${room.name}".`,
         mainMenuKeyboard()
       );
     });
 
-    // Обробка текстових повідомлень (посилання на Google Sheets)
-    this.bot.on('text', async (ctx) => {
-      this.logger.log(`Отримано текст від користувача ${ctx.from.id}. Сесія: ${JSON.stringify(ctx.session)}`);
-      
-      if (ctx.session?.awaitingSheetUrl) {
-        const url = ctx.message.text.trim();
-        this.logger.log(`Отримано URL: ${url}`);
-        
-        if (!this.googleSheetsService.isValidGoogleSheetsUrl(url)) {
-          this.logger.warn(`Невалідний URL: ${url}`);
-          await ctx.reply(
-            '❌ Невірний формат посилання. Надішліть правильне посилання на Google Sheets.'
-          );
-          return;
-        }
-        
-        this.logger.log(`URL валідний, спробуємо отримати дані...`);
+    // Видалення кімнати (тільки для адміна)
+    this.bot.hears('🗑️ Видалити кімнату', async (ctx) => {
+      const room = await this.roomService.findUserRoom(ctx.from.id);
+      if (!room || room.adminId !== ctx.from.id) {
+        await ctx.reply('❌ Ви не є адміністратором кімнати.', mainMenuKeyboard());
+        return;
+      }
 
-        try {
-          // Перевіряємо чи можемо отримати дані з таблиці
-          const words = await this.googleSheetsService.extractWordsFromSheet(url);
-          
-          if (words.length === 0) {
-            await ctx.reply(
-              '⚠️ Таблиця порожня або дані не знайдено в колонці B.\n' +
-              'Переконайтеся що англійські слова знаходяться в колонці B.'
-            );
-            return;
+      // Підтвердження видалення
+      await ctx.reply(
+        `⚠️ Ви впевнені, що хочете видалити кімнату "${room.name}"?\n\n` +
+        `👥 Учасників: ${room.participants.length}\n` +
+        `📊 Статус: ${room.status === RoomStatus.WAITING ? 'Очікування' : 
+                     room.status === RoomStatus.ACTIVE ? 'Активна' : 'Завершена'}\n\n` +
+        `⚠️ Всі учасники отримають повідомлення про видалення кімнати.\n` +
+        `Цю дію неможливо скасувати!`,
+        {
+          reply_markup: {
+            inline_keyboard: [
+              [
+                { text: '✅ Так, видалити', callback_data: `delete_room_${room.roomId}` },
+                { text: '❌ Скасувати', callback_data: 'cancel_delete_room' }
+              ]
+            ]
           }
-
-          // Зберігаємо посилання та дані
-          this.logger.log(`Зберігаємо посилання для користувача ${ctx.from.id}`);
-          await this.userService.updateGoogleSheetsUrl(ctx.from.id, url);
-          this.logger.log(`Зберігаємо ${words.length} слів для користувача ${ctx.from.id}`);
-          await this.userService.updateCachedWords(ctx.from.id, words);
-
-          await ctx.reply(
-            `✅ Посилання успішно збережено!\n\n` +
-            `📊 Знайдено ${words.length} пар слів для навчання.\n\n` +
-            `Тепер ви можете перейти до навчання!`,
-            mainMenuKeyboard()
-          );
-
-          ctx.session = {};
-          this.logger.log(`Очищено сесію для користувача ${ctx.from.id}`);
-        } catch (error) {
-          this.logger.error('Error processing Google Sheets URL:', error);
-          await ctx.reply(
-            `❌ Не вдалося отримати дані з таблиці.\n\n` +
-            `Переконайтеся що:\n` +
-            `• Таблиця доступна для перегляду\n` +
-            `• Посилання правильне\n` +
-            `• В таблиці є англійські слова в колонці B\n` +
-            `• Колонка F порожня для слів, які хочете вивчати`
-          );
         }
+      );
+    });
+
+    // Назад до головного меню
+    this.bot.hears('⬅️ Головне меню', async (ctx) => {
+      await ctx.reply('🎅 Головне меню:', mainMenuKeyboard());
+    });
+
+    // Обробка текстових повідомлень
+    this.bot.on('text', async (ctx) => {
+      const session = ctx.session || {};
+
+      if (session.awaitingDisplayName) {
+        await this.handleDisplayNameInput(ctx, ctx.message.text.trim());
+      } else if (session.awaitingRoomName) {
+        await this.handleRoomNameInput(ctx, ctx.message.text.trim());
+      } else if (session.awaitingGiftDescription) {
+        await this.handleGiftDescriptionInput(ctx, ctx.message.text.trim());
       } else {
         await ctx.reply(
           'Використовуйте кнопки меню для навігації 👇',
@@ -310,66 +474,47 @@ export class TelegramService implements OnModuleInit {
       if (!('data' in ctx.callbackQuery)) return;
       const data = ctx.callbackQuery.data;
       
-      if (data.startsWith('learned_')) {
-        // Додаємо слово до вивчених
-        const word = data.replace('learned_', '');
-        await this.userService.addLearnedWord(ctx.from.id, word);
-        
-        await ctx.editMessageReplyMarkup({
-          inline_keyboard: [
-            [{ text: '✅ Додано до вивчених!', callback_data: 'word_learned' }]
-          ]
-        });
-        
-        await ctx.answerCbQuery(`✅ Слово "${word}" додано до вивчених!`);
-      } else if (data.startsWith('remove_')) {
-        // Видаляємо слово з вивчених
-        const word = data.replace('remove_', '');
-        await this.userService.removeLearnedWord(ctx.from.id, word);
-        await ctx.answerCbQuery(`🗑️ Слово "${word}" видалено з вивчених!`);
-        
-        // Оновлюємо список
-        const learnedWords = await this.userService.getLearnedWords(ctx.from.id);
-        if (learnedWords.length === 0) {
-          await ctx.editMessageText('📋 Всі слова видалено!');
-          return;
-        }
-        
-        // Перебудовуємо клавіатуру
-        const keyboard = [];
-        for (let i = 0; i < learnedWords.length; i += 2) {
-          const row = [];
-          row.push({ text: `❌ ${learnedWords[i]}`, callback_data: `remove_${learnedWords[i]}` });
-          if (learnedWords[i + 1]) {
-            row.push({ text: `❌ ${learnedWords[i + 1]}`, callback_data: `remove_${learnedWords[i + 1]}` });
-          }
-          keyboard.push(row);
-        }
-        keyboard.push([{ text: '🗑️ Очистити все', callback_data: 'clear_all_learned' }]);
-        keyboard.push([{ text: '⬅️ Назад', callback_data: 'back_to_learned_menu' }]);
-
-        await ctx.editMessageReplyMarkup({ inline_keyboard: keyboard });
-      } else if (data === 'clear_all_learned') {
-        // Очищуємо всі вивчені слова
-        const user = await this.userService.findByTelegramId(ctx.from.id);
-        if (user) {
-          user.learnedWords = [];
-          await user.save();
-        }
-        
-        await ctx.editMessageText('🗑️ Всі вивчені слова очищено!');
-        await ctx.answerCbQuery('✅ Всі слова видалено!');
-      } else if (data === 'back_to_learned_menu') {
+      if (data.startsWith('manage_ignore_')) {
+        await this.handleManageIgnoreList(ctx, data.replace('manage_ignore_', ''));
+      } else if (data.startsWith('add_ignore_')) {
+        await this.handleAddToIgnoreList(ctx, data.replace('add_ignore_', ''));
+      } else if (data.startsWith('remove_ignore_')) {
+        await this.handleRemoveFromIgnoreList(ctx, data.replace('remove_ignore_', ''));
+      } else if (data.startsWith('delete_room_')) {
+        await this.handleDeleteRoom(ctx, data.replace('delete_room_', ''));
+      } else if (data === 'cancel_delete_room') {
         await ctx.deleteMessage();
-        const learnedWords = await this.userService.getLearnedWords(ctx.from.id);
-        
-        await ctx.reply(
-          `📚 Керування вивченими словами\n\n` +
-          `У вас ${learnedWords.length} вивчених слів`,
-          learnedWordsKeyboard()
-        );
-      } else if (data === 'word_learned') {
-        await ctx.answerCbQuery('Слово вже додано!');
+        await ctx.reply('❌ Видалення кімнати скасовано.', adminMenuKeyboard());
+      } else if (data === 'back_to_admin_menu') {
+        await ctx.deleteMessage();
+        await ctx.reply('👑 Панель адміністратора:', adminMenuKeyboard());
+      } else if (data === 'back_to_ignore_management') {
+        // Повертаємося до вибору учасника
+        const room = await this.roomService.findUserRoom(ctx.from.id);
+        if (room) {
+          const users = await this.userService.findMultipleByTelegramIds(room.participants);
+          const keyboard = [];
+          for (let i = 0; i < users.length; i += 2) {
+            const row = [];
+            const user1 = users[i];
+            const name1 = user1.displayName || user1.firstName || 'Без імені';
+            row.push({ text: `👤 ${name1}`, callback_data: `manage_ignore_${user1.telegramId}` });
+            
+            if (users[i + 1]) {
+              const user2 = users[i + 1];
+              const name2 = user2.displayName || user2.firstName || 'Без імені';
+              row.push({ text: `👤 ${name2}`, callback_data: `manage_ignore_${user2.telegramId}` });
+            }
+            keyboard.push(row);
+          }
+          keyboard.push([{ text: '⬅️ Назад', callback_data: 'back_to_admin_menu' }]);
+
+          await ctx.editMessageText(
+            '🚫 Керування ігнор-листами\n\n' +
+            'Виберіть учасника, для якого хочете налаштувати ігнор-лист:',
+            { reply_markup: { inline_keyboard: keyboard } }
+          );
+        }
       }
     });
 
@@ -380,8 +525,405 @@ export class TelegramService implements OnModuleInit {
     });
   }
 
+  // === ДОПОМІЖНІ МЕТОДИ ===
+
+  private async handleJoinRoom(ctx: any, roomId: string) {
+    const user = ctx.from;
+    if (!user) return;
+
+    // Створюємо користувача якщо не існує
+    let dbUser = await this.userService.findByTelegramId(user.id);
+    if (!dbUser) {
+      dbUser = await this.userService.createUser({
+        telegramId: user.id,
+        firstName: user.first_name,
+        lastName: user.last_name,
+        username: user.username,
+      });
+    }
+
+    // Перевіряємо чи існує кімната
+    const room = await this.roomService.findByRoomId(roomId);
+    if (!room) {
+      await ctx.reply('❌ Кімната не знайдена або більше не існує.', mainMenuKeyboard());
+      return;
+    }
+
+    if (room.status !== RoomStatus.WAITING) {
+      await ctx.reply('❌ Неможливо приєднатися. Гра вже почалася.', mainMenuKeyboard());
+      return;
+    }
+
+    // Перевіряємо чи користувач вже в кімнаті
+    if (room.participants.includes(user.id)) {
+      await ctx.reply(
+        `❌ Ви вже знаходитесь в кімнаті "${room.name}".`,
+        mainMenuKeyboard()
+      );
+      return;
+    }
+
+    // Перевіряємо чи користувач в іншій кімнаті
+    const existingRoom = await this.roomService.findUserRoom(user.id);
+    if (existingRoom) {
+      await ctx.reply(
+        `❌ Ви вже знаходитесь в іншій кімнаті "${existingRoom.name}".\n\n` +
+        'Спочатку покиньте поточну кімнату.',
+        mainMenuKeyboard()
+      );
+      return;
+    }
+
+    await ctx.reply(
+      `🎅 Приєднання до кімнати "${room.name}"\n\n` +
+      `👤 Крок 1/2: Як тебе представити в кімнаті?\n` +
+      'Напиши своє ім\'я або псевдонім:'
+    );
+
+    ctx.session = { awaitingDisplayName: true, currentRoomId: roomId, isJoiningRoom: true };
+  }
+
+  private async handleDisplayNameInput(ctx: any, displayName: string) {
+    const session = ctx.session || {};
+    
+    if (session.isNameChange) {
+      // Зміна імені в існуючій кімнаті
+      await this.userService.updateDisplayName(ctx.from.id, displayName);
+      
+      await ctx.reply(
+        `✅ Ім'я змінено на: ${displayName}`,
+        userMenuKeyboard()
+      );
+      ctx.session = {};
+    } else if (session.isJoiningRoom && session.currentRoomId) {
+      // Приєднання до існуючої кімнати - зберігаємо ім'я і просимо опис подарунку
+      await this.userService.updateDisplayName(ctx.from.id, displayName);
+      
+      const room = await this.roomService.findByRoomId(session.currentRoomId);
+      
+      await ctx.reply(
+        `✅ Ваше ім'я: ${displayName}\n\n` +
+        `🎁 Тепер опишіть що ви хочете отримати в подарунок від свого Таємного Санти:\n\n` +
+        `💡 Наприклад: "Книга про програмування", "Кава та солодощі", "Сертифікат в кінотеатр"`
+      );
+      
+      ctx.session = { 
+        awaitingGiftDescription: true, 
+        currentRoomId: session.currentRoomId,
+        isJoiningRoom: true,
+        tempDisplayName: displayName
+      };
+    } else if (session.currentRoomId && !session.isJoiningRoom) {
+      // Старий процес приєднання (для сумісності)
+      await this.userService.updateDisplayName(ctx.from.id, displayName);
+      await this.roomService.addParticipant(session.currentRoomId, ctx.from.id);
+      await this.userService.setCurrentRoom(ctx.from.id, session.currentRoomId);
+
+      const room = await this.roomService.findByRoomId(session.currentRoomId);
+      
+      await ctx.reply(
+        `✅ Ви приєдналися до кімнати "${room?.name}"!\n\n` +
+        `Ваше ім'я: ${displayName}`,
+        userMenuKeyboard()
+      );
+      ctx.session = {};
+    } else {
+      // Створення нової кімнати
+      await this.userService.updateDisplayName(ctx.from.id, displayName);
+      
+      await ctx.reply(
+        `✅ Ваше ім'я: ${displayName}\n\n` +
+        'Тепер придумайте назву для кімнати:'
+      );
+      
+      ctx.session = { awaitingRoomName: true };
+    }
+  }
+
+  private async handleRoomNameInput(ctx: any, roomName: string) {
+    try {
+      const room = await this.roomService.createRoom(roomName, ctx.from.id);
+      await this.userService.setCurrentRoom(ctx.from.id, room.roomId);
+
+      const botUsername = this.bot.botInfo?.username || 'bot';
+      const inviteLink = `t.me/${botUsername}?start=${room.roomId}`;
+
+      await ctx.reply(
+        `🎉 Кімната "${roomName}" створена!\n\n` +
+        `🆔 ID кімнати: #${room.roomId}\n\n` +
+        `🔗 Посилання для запрошення:\n${inviteLink}\n\n` +
+        `Надішліть це посилання друзям, щоб вони могли приєднатися.`,
+        adminMenuKeyboard()
+      );
+    } catch (error) {
+      this.logger.error('Error creating room:', error);
+      await ctx.reply('❌ Помилка при створенні кімнати.', mainMenuKeyboard());
+    }
+
+    ctx.session = {};
+  }
+
+  private async handleGiftDescriptionInput(ctx: any, description: string) {
+    const session = ctx.session || {};
+    
+    await this.userService.updateGiftDescription(ctx.from.id, description);
+    
+    if (session.isJoiningRoom && session.currentRoomId) {
+      // Завершуємо процес приєднання до кімнати
+      await this.roomService.addParticipant(session.currentRoomId, ctx.from.id);
+      await this.userService.setCurrentRoom(ctx.from.id, session.currentRoomId);
+
+      const room = await this.roomService.findByRoomId(session.currentRoomId);
+      
+      await ctx.reply(
+        `🎉 Ви успішно приєдналися до кімнати "${room?.name}"!\n\n` +
+        `👤 Ваше ім'я: ${session.tempDisplayName}\n` +
+        `🎁 Ваш бажаний подарунок:\n${description}\n\n` +
+        `Тепер чекайте поки адміністратор запустить розподіл!`,
+        userMenuKeyboard()
+      );
+    } else {
+      // Звичайне редагування опису подарунку
+      await ctx.reply(
+        `✅ Опис подарунку оновлено:\n\n${description}`,
+        userMenuKeyboard()
+      );
+    }
+
+    ctx.session = {};
+  }
+
+  private async notifyParticipants(participantIds: number[], assignments: { [telegramId: string]: number }) {
+    const users = await this.userService.findMultipleByTelegramIds(participantIds);
+    const userMap = new Map(users.map(user => [user.telegramId, user]));
+
+    for (const [giverId, receiverId] of Object.entries(assignments)) {
+      const giver = userMap.get(parseInt(giverId));
+      const receiver = userMap.get(receiverId);
+
+      if (giver && receiver) {
+        const receiverName = receiver.displayName || receiver.firstName || 'Учасник';
+        const giftDescription = receiver.giftDescription || 'Не вказано';
+
+        try {
+          await this.bot.telegram.sendMessage(
+            parseInt(giverId),
+            `🎅 Розподіл готовий!\n\n` +
+            `🎁 Ви дарувальник для: ${receiverName}\n\n` +
+            `💝 Що хоче отримати:\n${giftDescription}\n\n` +
+            `🤫 Тримайте це в секреті!`
+          );
+        } catch (error) {
+          this.logger.error(`Failed to notify user ${giverId}:`, error);
+        }
+      }
+    }
+  }
+
+  private async handleManageIgnoreList(ctx: any, targetUserId: string) {
+    const room = await this.roomService.findUserRoom(ctx.from.id);
+    if (!room || room.adminId !== ctx.from.id) {
+      await ctx.answerCbQuery('❌ Ви не є адміністратором кімнати.');
+      return;
+    }
+
+    const targetId = parseInt(targetUserId);
+    const targetUser = await this.userService.findByTelegramId(targetId);
+    const allUsers = await this.userService.findMultipleByTelegramIds(room.participants);
+    
+    if (!targetUser) {
+      await ctx.answerCbQuery('❌ Користувач не знайдений.');
+      return;
+    }
+
+    const targetName = targetUser.displayName || targetUser.firstName || 'Без імені';
+    const ignoreList = targetUser.ignoreList || [];
+    
+    // Створюємо клавіатуру з іншими учасниками
+    const keyboard = [];
+    
+    // Розділяємо на тих, хто в ігнор-листі і тих, хто не в ньому
+    const otherUsers = allUsers.filter(user => user.telegramId !== targetId);
+    
+    if (otherUsers.length === 0) {
+      await ctx.editMessageText(
+        `🚫 Ігнор-лист для ${targetName}\n\n` +
+        'Немає інших учасників для налаштування.',
+        { reply_markup: { inline_keyboard: [[{ text: '⬅️ Назад', callback_data: 'back_to_ignore_management' }]] } }
+      );
+      return;
+    }
+
+    // Спочатку показуємо тих, хто НЕ в ігнор-листі (можна додати)
+    const notIgnored = otherUsers.filter(user => !ignoreList.includes(user.telegramId));
+    if (notIgnored.length > 0) {
+      keyboard.push([{ text: '➕ Додати до ігнор-листу:', callback_data: 'header_add' }]);
+      for (let i = 0; i < notIgnored.length; i += 2) {
+        const row = [];
+        const user1 = notIgnored[i];
+        const name1 = user1.displayName || user1.firstName || 'Без імені';
+        row.push({ text: `➕ ${name1}`, callback_data: `add_ignore_${targetId}_${user1.telegramId}` });
+        
+        if (notIgnored[i + 1]) {
+          const user2 = notIgnored[i + 1];
+          const name2 = user2.displayName || user2.firstName || 'Без імені';
+          row.push({ text: `➕ ${name2}`, callback_data: `add_ignore_${targetId}_${user2.telegramId}` });
+        }
+        keyboard.push(row);
+      }
+    }
+
+    // Потім показуємо тих, хто В ігнор-листі (можна видалити)
+    const ignored = otherUsers.filter(user => ignoreList.includes(user.telegramId));
+    if (ignored.length > 0) {
+      if (keyboard.length > 0) keyboard.push([{ text: ' ', callback_data: 'spacer' }]);
+      keyboard.push([{ text: '➖ Видалити з ігнор-листу:', callback_data: 'header_remove' }]);
+      for (let i = 0; i < ignored.length; i += 2) {
+        const row = [];
+        const user1 = ignored[i];
+        const name1 = user1.displayName || user1.firstName || 'Без імені';
+        row.push({ text: `➖ ${name1}`, callback_data: `remove_ignore_${targetId}_${user1.telegramId}` });
+        
+        if (ignored[i + 1]) {
+          const user2 = ignored[i + 1];
+          const name2 = user2.displayName || user2.firstName || 'Без імені';
+          row.push({ text: `➖ ${name2}`, callback_data: `remove_ignore_${targetId}_${user2.telegramId}` });
+        }
+        keyboard.push(row);
+      }
+    }
+
+    keyboard.push([{ text: '⬅️ Назад', callback_data: 'back_to_ignore_management' }]);
+
+    const ignoreListText = ignored.length > 0 
+      ? ignored.map(u => u.displayName || u.firstName || 'Без імені').join(', ')
+      : 'Порожній';
+
+    await ctx.editMessageText(
+      `🚫 Ігнор-лист для ${targetName}\n\n` +
+      `Поточний ігнор-лист: ${ignoreListText}\n\n` +
+      'Виберіть дію:',
+      { reply_markup: { inline_keyboard: keyboard } }
+    );
+  }
+
+  private async handleAddToIgnoreList(ctx: any, data: string) {
+    const [targetUserId, ignoreUserId] = data.split('_').map(id => parseInt(id));
+    
+    await this.userService.addToIgnoreList(targetUserId, ignoreUserId);
+    
+    const targetUser = await this.userService.findByTelegramId(targetUserId);
+    const ignoreUser = await this.userService.findByTelegramId(ignoreUserId);
+    
+    const targetName = targetUser?.displayName || targetUser?.firstName || 'Користувач';
+    const ignoreName = ignoreUser?.displayName || ignoreUser?.firstName || 'Користувач';
+    
+    await ctx.answerCbQuery(`✅ ${ignoreName} додано до ігнор-листу ${targetName}`);
+    
+    // Оновлюємо інтерфейс
+    await this.handleManageIgnoreList(ctx, targetUserId.toString());
+  }
+
+  private async handleRemoveFromIgnoreList(ctx: any, data: string) {
+    const [targetUserId, ignoreUserId] = data.split('_').map(id => parseInt(id));
+    
+    await this.userService.removeFromIgnoreList(targetUserId, ignoreUserId);
+    
+    const targetUser = await this.userService.findByTelegramId(targetUserId);
+    const ignoreUser = await this.userService.findByTelegramId(ignoreUserId);
+    
+    const targetName = targetUser?.displayName || targetUser?.firstName || 'Користувач';
+    const ignoreName = ignoreUser?.displayName || ignoreUser?.firstName || 'Користувач';
+    
+    await ctx.answerCbQuery(`✅ ${ignoreName} видалено з ігнор-листу ${targetName}`);
+    
+    // Оновлюємо інтерфейс
+    await this.handleManageIgnoreList(ctx, targetUserId.toString());
+  }
+
+  private async handleDeleteRoom(ctx: any, roomId: string) {
+    const room = await this.roomService.findByRoomId(roomId);
+    if (!room || room.adminId !== ctx.from.id) {
+      await ctx.answerCbQuery('❌ Ви не є адміністратором цієї кімнати.');
+      return;
+    }
+
+    try {
+      // Отримуємо список всіх учасників для повідомлення
+      const users = await this.userService.findMultipleByTelegramIds(room.participants);
+      const adminUser = users.find(u => u.telegramId === room.adminId);
+      const adminName = adminUser?.displayName || adminUser?.firstName || 'Адміністратор';
+
+      // Видаляємо повідомлення з підтвердженням
+      await ctx.deleteMessage();
+
+      // Повідомляємо про початок видалення
+      const statusMessage = await ctx.reply(
+        `🗑️ Видаляю кімнату "${room.name}"...\n\n` +
+        `📤 Надсилаю повідомлення ${room.participants.length} учасникам...`
+      );
+
+      // Надсилаємо повідомлення всім учасникам (крім адміна)
+      const notificationPromises = room.participants
+        .filter(participantId => participantId !== room.adminId)
+        .map(async (participantId) => {
+          try {
+            await this.bot.telegram.sendMessage(
+              participantId,
+              `🗑️ Кімнату "${room.name}" було видалено\n\n` +
+              `👑 Адміністратор: ${adminName}\n` +
+              `📅 Дата видалення: ${new Date().toLocaleString('uk-UA')}\n\n` +
+              `Ви можете створити нову кімнату або приєднатися до іншої.`,
+              mainMenuKeyboard()
+            );
+          } catch (error) {
+            this.logger.error(`Failed to notify user ${participantId} about room deletion:`, error);
+          }
+        });
+
+      // Чекаємо поки всі повідомлення надішлються
+      await Promise.allSettled(notificationPromises);
+
+      // Очищаємо прив'язку до кімнати у всіх учасників
+      const clearUserPromises = room.participants.map(participantId => 
+        this.userService.clearCurrentRoom(participantId)
+      );
+      await Promise.allSettled(clearUserPromises);
+
+      // Видаляємо кімнату з бази даних
+      await this.roomService.deleteRoom(roomId);
+
+      // Оновлюємо статус повідомлення
+      await ctx.telegram.editMessageText(
+        ctx.chat.id,
+        statusMessage.message_id,
+        undefined,
+        `✅ Кімнату "${room.name}" успішно видалено!\n\n` +
+        `📤 Повідомлення надіслано всім учасникам\n` +
+        `🗑️ Дані очищено з бази даних`
+      );
+
+      // Через 3 секунди показуємо головне меню
+      setTimeout(async () => {
+        await ctx.reply(
+          '🎅 Ви повернулися до головного меню.\n\n' +
+          'Можете створити нову кімнату або приєднатися до існуючої.',
+          mainMenuKeyboard()
+        );
+      }, 3000);
+
+    } catch (error) {
+      this.logger.error('Error deleting room:', error);
+      await ctx.reply(
+        '❌ Помилка при видаленні кімнати.\n\n' +
+        'Спробуйте ще раз або зверніться до підтримки.',
+        adminMenuKeyboard()
+      );
+    }
+  }
+
   async onApplicationShutdown() {
     await this.bot.stop();
-    this.logger.log('Telegram bot stopped');
+    this.logger.log('Secret Santa bot stopped');
   }
 }

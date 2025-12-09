@@ -1,7 +1,7 @@
 {
-  "name": "english-telegram-bot",
+  "name": "secret-santa-bot",
   "version": "1.0.0",
-  "description": "Telegram bot for learning English words from Google Sheets",
+  "description": "Telegram bot for Secret Santa game with ignore lists",
   "main": "dist/main.js",
   "scripts": {
     "setup": "node setup.js",
@@ -28,7 +28,6 @@
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.2",
     "dotenv": "^16.6.1",
-    "googleapis": "^126.0.1",
     "mongoose": "^7.8.7",
     "reflect-metadata": "^0.1.14",
     "rxjs": "^7.8.2",

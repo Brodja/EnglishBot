@@ -4,9 +4,6 @@ export default () => ({
     apiKey: process.env.API_KEY,
   },
   database: {
-    mongoUri: process.env.MONGO_URI || 'mongodb://localhost:27017/englishbot',
-  },
-  googleSheets: {
-    apiKey: process.env.GOOGLE_SHEETS_API_KEY,
+    mongoUri: process.env.MONGO_URI || 'mongodb://localhost:27017/secretsanta',
   },
 });

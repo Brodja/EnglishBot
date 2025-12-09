@@ -17,10 +17,9 @@ async function bootstrap() {
   
   try {
     await app.listen(port);
-    console.log(`🚀 English Bot is running on port ${port}`);
-    console.log(`📊 MongoDB URI: ${process.env.MONGO_URI || 'mongodb://localhost:27017/englishbot'}`);
+    console.log(`🎅 Secret Santa Bot is running on port ${port}`);
+    console.log(`📊 MongoDB URI: ${process.env.MONGO_URI || 'mongodb://localhost:27017/secretsanta'}`);
     console.log(`🤖 Telegram Bot Token: ${process.env.API_KEY ? '✅ Встановлений' : '❌ Відсутній'}`);
-    console.log(`📋 Google Sheets API Key: ${process.env.GOOGLE_SHEETS_API_KEY ? '✅ Встановлений' : '❌ Відсутній'}`);
   } catch (error) {
     console.error('❌ Помилка запуску:', error);
     process.exit(1);

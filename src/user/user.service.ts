@@ -16,86 +16,77 @@ export class UserService {
     firstName?: string;
     lastName?: string;
     username?: string;
+    displayName?: string;
   }): Promise<UserDocument> {
     const user = new this.userModel(userData);
     return user.save();
   }
 
-  async updateGoogleSheetsUrl(telegramId: number, url: string): Promise<UserDocument> {
-    console.log(`[UserService] Оновлюємо URL для користувача ${telegramId}: ${url}`);
-    
-    const result = await this.userModel.findOneAndUpdate(
-      { telegramId },
-      { googleSheetsUrl: url },
-      { new: true, upsert: true }
-    ).exec();
-    
-    console.log(`[UserService] Результат оновлення:`, result?.googleSheetsUrl ? '✅ Збережено' : '❌ Помилка');
-    return result;
-  }
-
-  async updateCachedWords(
-    telegramId: number,
-    words: Array<{ english: string; translation: string }>
-  ): Promise<UserDocument> {
+  async updateDisplayName(telegramId: number, displayName: string): Promise<UserDocument> {
     return this.userModel.findOneAndUpdate(
       { telegramId },
-      {
-        cachedWords: {
-          words,
-          lastUpdated: new Date(),
-        },
-        lastDataUpdate: new Date(),
-      },
-      { new: true }
-    ).exec();
-  }
-
-  async updateProgress(
-    telegramId: number,
-    type: 'english' | 'translation',
-    shownIndices: number[]
-  ): Promise<UserDocument> {
-    const updateField = type === 'english' ? 'progress.englishShown' : 'progress.translationShown';
-    
-    return this.userModel.findOneAndUpdate(
-      { telegramId },
-      { [updateField]: shownIndices },
-      { new: true }
-    ).exec();
-  }
-
-  async resetProgress(telegramId: number): Promise<UserDocument> {
-    return this.userModel.findOneAndUpdate(
-      { telegramId },
-      {
-        progress: {
-          englishShown: [],
-          translationShown: [],
-        },
-      },
-      { new: true }
-    ).exec();
-  }
-
-  async addLearnedWord(telegramId: number, word: string): Promise<UserDocument> {
-    return this.userModel.findOneAndUpdate(
-      { telegramId },
-      { $addToSet: { learnedWords: word.toLowerCase() } }, // $addToSet не додає дублікати
+      { displayName },
       { new: true, upsert: true }
     ).exec();
   }
 
-  async removeLearnedWord(telegramId: number, word: string): Promise<UserDocument> {
+  async updateGiftDescription(telegramId: number, description: string): Promise<UserDocument> {
     return this.userModel.findOneAndUpdate(
       { telegramId },
-      { $pull: { learnedWords: word.toLowerCase() } },
+      { giftDescription: description },
       { new: true }
     ).exec();
   }
 
-  async getLearnedWords(telegramId: number): Promise<string[]> {
-    const user = await this.userModel.findOne({ telegramId }).exec();
-    return user?.learnedWords || [];
+  async setCurrentRoom(telegramId: number, roomId: string): Promise<UserDocument> {
+    return this.userModel.findOneAndUpdate(
+      { telegramId },
+      { currentRoomId: roomId },
+      { new: true }
+    ).exec();
+  }
+
+  async clearCurrentRoom(telegramId: number): Promise<UserDocument> {
+    return this.userModel.findOneAndUpdate(
+      { telegramId },
+      { $unset: { currentRoomId: 1, assignedTo: 1 } },
+      { new: true }
+    ).exec();
+  }
+
+  async setAssignment(telegramId: number, assignedTo: number): Promise<UserDocument> {
+    return this.userModel.findOneAndUpdate(
+      { telegramId },
+      { assignedTo },
+      { new: true }
+    ).exec();
+  }
+
+  async addToIgnoreList(telegramId: number, ignoreUserId: number): Promise<UserDocument> {
+    return this.userModel.findOneAndUpdate(
+      { telegramId },
+      { $addToSet: { ignoreList: ignoreUserId } },
+      { new: true }
+    ).exec();
+  }
+
+  async removeFromIgnoreList(telegramId: number, ignoreUserId: number): Promise<UserDocument> {
+    return this.userModel.findOneAndUpdate(
+      { telegramId },
+      { $pull: { ignoreList: ignoreUserId } },
+      { new: true }
+    ).exec();
+  }
+
+  async clearIgnoreList(telegramId: number): Promise<UserDocument> {
+    return this.userModel.findOneAndUpdate(
+      { telegramId },
+      { ignoreList: [] },
+      { new: true }
+    ).exec();
+  }
+
+  async findMultipleByTelegramIds(telegramIds: number[]): Promise<UserDocument[]> {
+    return this.userModel.find({ telegramId: { $in: telegramIds } }).exec();
   }
 }
