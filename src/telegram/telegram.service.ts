@@ -333,13 +333,29 @@ export class TelegramService implements OnModuleInit {
       }
 
       const users = await this.userService.findMultipleByTelegramIds(room.participants);
+      
+      // Створюємо мапу користувачів для швидкого пошуку
+      const userMap = new Map(users.map(user => [user.telegramId, user]));
+      
       const userList = users.map((user, index) => {
         const name = user.displayName || user.firstName || 'Без імені';
         const username = user.username ? `@${user.username}` : '';
         const isAdmin = user.telegramId === room.adminId ? '👑' : '';
         const isMe = user.telegramId === ctx.from.id ? '(ви)' : '';
         
-        return `${index + 1}. ${name} ${username} ${isAdmin} ${isMe}`.trim();
+        // Формуємо список ігнорованих користувачів
+        let ignoreInfo = '';
+        if (user.ignoreList && user.ignoreList.length > 0) {
+          const ignoredNames = user.ignoreList
+            .map(ignoredId => {
+              const ignoredUser = userMap.get(ignoredId);
+              return ignoredUser?.displayName || ignoredUser?.firstName || `ID:${ignoredId}`;
+            })
+            .join(', ');
+          ignoreInfo = ` (ігнорує: ${ignoredNames})`;
+        }
+        
+        return `${index + 1}. ${name} ${username} ${isAdmin} ${isMe}${ignoreInfo}`.trim();
       }).join('\n');
 
       const statusText = room.status === RoomStatus.WAITING ? '⏳ Очікування' : 
