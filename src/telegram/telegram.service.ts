@@ -388,6 +388,55 @@ export class TelegramService implements OnModuleInit {
       ctx.session = { awaitingGiftDescription: true };
     });
 
+    // Переглянути одержувача
+    this.bot.hears('🎅 Мій одержувач', async (ctx) => {
+      const room = await this.roomService.findUserRoom(ctx.from.id);
+      if (!room) {
+        await ctx.reply('❌ Ви не знаходитесь в кімнаті.', mainMenuKeyboard());
+        return;
+      }
+
+      if (room.status !== RoomStatus.ACTIVE) {
+        await ctx.reply(
+          '❌ Розподіл ще не відбувся.\n\n' +
+          'Зачекайте поки адміністратор запустить розподіл.',
+          userMenuKeyboard()
+        );
+        return;
+      }
+
+      const user = await this.userService.findByTelegramId(ctx.from.id);
+      if (!user || !user.assignedTo) {
+        await ctx.reply(
+          '❌ Не вдалося знайти ваше призначення.\n\n' +
+          'Зверніться до адміністратора.',
+          userMenuKeyboard()
+        );
+        return;
+      }
+
+      const receiver = await this.userService.findByTelegramId(user.assignedTo);
+      if (!receiver) {
+        await ctx.reply(
+          '❌ Не вдалося знайти інформацію про одержувача.\n\n' +
+          'Зверніться до адміністратора.',
+          userMenuKeyboard()
+        );
+        return;
+      }
+
+      const receiverName = receiver.displayName || receiver.firstName || 'Учасник';
+      const giftDescription = receiver.giftDescription || 'Не вказано';
+
+      await ctx.reply(
+        `🎅 Ви дарувальник для: ${receiverName}\n\n` +
+        `🎁 Віш-ліст:\n${giftDescription}\n\n` +
+        `💡 Одержувач може оновлювати свій віш-ліст - використовуйте цю кнопку щоб побачити актуальну інформацію!\n\n` +
+        `🤫 Тримайте це в секреті!`,
+        userMenuKeyboard()
+      );
+    });
+
     // Змінити ім'я
     this.bot.hears('👤 Змінити ім\'я', async (ctx) => {
       const room = await this.roomService.findUserRoom(ctx.from.id);
