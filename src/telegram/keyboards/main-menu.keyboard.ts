@@ -7,7 +7,7 @@ export const mainMenuKeyboard = (isAdmin = false) => {
     ['ℹ️ Допомога', '📝 Оновлення'],
     ['📨 Запропонувати / баг'],
   ];
-  if (isAdmin) rows.push(['📥 Повідомлення']);
+  if (isAdmin) rows.push(['📥 Повідомлення', '📢 Анонсувати']);
   return Markup.keyboard(rows).resize().persistent();
 };
 

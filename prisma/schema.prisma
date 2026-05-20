@@ -37,6 +37,18 @@ model Feedback {
   @@map("feedbacks")
 }
 
+// Лог відправлених анонсів. changelogId — стабільний slug з ChangelogEntry.
+// Запис означає "цей анонс вже розіслано, повторно не показуй".
+model Announcement {
+  changelogId String   @id
+  sentAt      DateTime @default(now())
+  sentBy      BigInt
+  recipients  Int
+  failures    Int
+
+  @@map("announcements")
+}
+
 model Word {
   id          String   @id @default(cuid())
   userId      BigInt

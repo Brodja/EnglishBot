@@ -8,13 +8,14 @@ import { GoogleSheetsService } from '../google-sheets/google-sheets.service';
 import { WordsService, LearningMode } from './services/words.service';
 import { SyncService, SyncResult } from './services/sync.service';
 import { FeedbackService, FeedbackRateLimitError } from '../feedback/feedback.service';
+import { AnnouncementService } from '../announcement/announcement.service';
 import {
   mainMenuKeyboard,
   learningMenuKeyboard,
   learnedWordsKeyboard,
   reviewMenuKeyboard,
 } from './keyboards/main-menu.keyboard';
-import { HELP_TEXT, formatChangelog } from './changelog';
+import { HELP_TEXT, formatChangelog, ChangelogEntry } from './changelog';
 
 @Injectable()
 export class TelegramService implements OnModuleInit {
@@ -34,6 +35,7 @@ export class TelegramService implements OnModuleInit {
     private readonly wordsService: WordsService,
     private readonly syncService: SyncService,
     private readonly feedbackService: FeedbackService,
+    private readonly announcementService: AnnouncementService,
   ) {
     const token = this.configService.get<string>('telegram.apiKey');
     if (!token) {
@@ -281,6 +283,37 @@ export class TelegramService implements OnModuleInit {
       await ctx.reply(await this.formatFeedbackList(), this.mainMenu(ctx));
     });
 
+    this.bot.hears('📢 Анонсувати', async (ctx) => {
+      if (!this.isAdmin(BigInt(ctx.from.id))) {
+        await ctx.reply('❌ Це адмін-функція.', this.mainMenu(ctx));
+        return;
+      }
+      const entries = await this.announcementService.findAllPending();
+      if (entries.length === 0) {
+        await ctx.reply(
+          '✅ Усі анонси вже розіслано. Додай новий запис з `announce: true` у changelog.ts.',
+          this.mainMenu(ctx),
+        );
+        return;
+      }
+      const userCount = await this.userService.countAll();
+      const ids = entries.map((e) => e.id).join(',');
+      await ctx.reply(
+        `📢 Готовий анонс для розсилки\n\n` +
+          `📦 Записів: ${entries.length}\n` +
+          `👥 Юзерів: ${userCount}\n\n` +
+          `Превʼю повідомлення:\n\n──────────────\n${this.formatAnnouncementText(entries)}\n──────────────`,
+        {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '✅ Розіслати', callback_data: `announce_${ids}` }],
+              [{ text: '❌ Скасувати', callback_data: 'announce_cancel' }],
+            ],
+          },
+        },
+      );
+    });
+
     this.bot.on('text', async (ctx) => {
       if (ctx.session?.awaitingFeedback) {
         await this.handleFeedbackText(ctx, ctx.message.text.trim());
@@ -392,6 +425,22 @@ export class TelegramService implements OnModuleInit {
           `📚 Керування вивченими словами\n\nУ вас ${learned.length} вивчених слів`,
           learnedWordsKeyboard(),
         );
+        return;
+      }
+
+      if (data.startsWith('announce_')) {
+        if (!this.isAdmin(BigInt(ctx.from.id))) {
+          await ctx.answerCbQuery('❌ Тільки для адмінів');
+          return;
+        }
+        if (data === 'announce_cancel') {
+          await ctx.editMessageText('❌ Розсилку скасовано.');
+          await ctx.answerCbQuery();
+          return;
+        }
+        const ids = data.slice('announce_'.length).split(',');
+        await ctx.answerCbQuery('⏳ Починаю розсилку...');
+        await this.handleBroadcast(ctx, ids);
         return;
       }
 
@@ -560,6 +609,54 @@ export class TelegramService implements OnModuleInit {
     }
 
     ctx.session = {};
+  }
+
+  private formatAnnouncementText(entries: ChangelogEntry[]): string {
+    const body = entries
+      .map(
+        (e) =>
+          `📅 ${e.date} — ${e.title}\n${e.items.map((i) => `• ${i}`).join('\n')}`,
+      )
+      .join('\n\n');
+    return (
+      `🆕 Оновлення в боті\n\n${body}\n\n` +
+      `💡 Усі оновлення доступні через кнопку «📝 Оновлення».`
+    );
+  }
+
+  private async handleBroadcast(ctx: BotContext, requestedIds: string[]) {
+    const pending = await this.announcementService.findAllPending();
+    const pendingIds = new Set(pending.map((e) => e.id));
+    const stillPending = requestedIds.every((id) => pendingIds.has(id));
+
+    if (!stillPending || pending.length === 0) {
+      await ctx.editMessageText('❌ Список анонсів змінився — спробуй ще раз через "📢 Анонсувати".');
+      return;
+    }
+
+    // Беремо ті entries у тому ж порядку як у CHANGELOG
+    const entries = pending.filter((e) => requestedIds.includes(e.id));
+
+    await ctx.editMessageText(`⏳ Розсилаю ${entries.length} записів...`);
+
+    try {
+      const text = this.formatAnnouncementText(entries);
+      const result = await this.announcementService.broadcast(
+        entries,
+        text,
+        this.bot,
+        BigInt(ctx.from.id),
+      );
+      await ctx.reply(
+        `✅ Розсилку завершено\n\n` +
+          `📤 Доставлено: ${result.recipients}\n` +
+          `❌ Помилок: ${result.failures}`,
+        this.mainMenu(ctx),
+      );
+    } catch (err) {
+      this.logger.error('Broadcast error:', err);
+      await ctx.reply(`❌ Помилка: ${(err as Error).message}`, this.mainMenu(ctx));
+    }
   }
 
   private async formatFeedbackList(): Promise<string> {

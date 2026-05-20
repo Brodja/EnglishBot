@@ -33,4 +33,8 @@ export class UserService {
       data: { googleSheetsUrl: url },
     });
   }
+
+  async countAll(): Promise<number> {
+    return this.prisma.user.count();
+  }
 }

@@ -7,6 +7,7 @@ import { TelegramModule } from './telegram/telegram.module';
 import { UserModule } from './user/user.module';
 import { GoogleSheetsModule } from './google-sheets/google-sheets.module';
 import { FeedbackModule } from './feedback/feedback.module';
+import { AnnouncementModule } from './announcement/announcement.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { FeedbackModule } from './feedback/feedback.module';
     UserModule,
     GoogleSheetsModule,
     FeedbackModule,
+    AnnouncementModule,
   ],
 })
 export class AppModule {}
