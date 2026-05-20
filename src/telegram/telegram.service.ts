@@ -297,7 +297,6 @@ export class TelegramService implements OnModuleInit {
         return;
       }
       const userCount = await this.userService.countAll();
-      const ids = entries.map((e) => e.id).join(',');
       await ctx.reply(
         `📢 Готовий анонс для розсилки\n\n` +
           `📦 Записів: ${entries.length}\n` +
@@ -306,7 +305,7 @@ export class TelegramService implements OnModuleInit {
         {
           reply_markup: {
             inline_keyboard: [
-              [{ text: '✅ Розіслати', callback_data: `announce_${ids}` }],
+              [{ text: '✅ Розіслати', callback_data: 'announce_confirm' }],
               [{ text: '❌ Скасувати', callback_data: 'announce_cancel' }],
             ],
           },
@@ -438,9 +437,10 @@ export class TelegramService implements OnModuleInit {
           await ctx.answerCbQuery();
           return;
         }
-        const ids = data.slice('announce_'.length).split(',');
-        await ctx.answerCbQuery('⏳ Починаю розсилку...');
-        await this.handleBroadcast(ctx, ids);
+        if (data === 'announce_confirm') {
+          await ctx.answerCbQuery('⏳ Починаю розсилку...');
+          await this.handleBroadcast(ctx);
+        }
         return;
       }
 
@@ -624,18 +624,12 @@ export class TelegramService implements OnModuleInit {
     );
   }
 
-  private async handleBroadcast(ctx: BotContext, requestedIds: string[]) {
-    const pending = await this.announcementService.findAllPending();
-    const pendingIds = new Set(pending.map((e) => e.id));
-    const stillPending = requestedIds.every((id) => pendingIds.has(id));
-
-    if (!stillPending || pending.length === 0) {
-      await ctx.editMessageText('❌ Список анонсів змінився — спробуй ще раз через "📢 Анонсувати".');
+  private async handleBroadcast(ctx: BotContext) {
+    const entries = await this.announcementService.findAllPending();
+    if (entries.length === 0) {
+      await ctx.editMessageText('❌ Немає анонсів для розсилки (можливо вже розіслано).');
       return;
     }
-
-    // Беремо ті entries у тому ж порядку як у CHANGELOG
-    const entries = pending.filter((e) => requestedIds.includes(e.id));
 
     await ctx.editMessageText(`⏳ Розсилаю ${entries.length} записів...`);
 
