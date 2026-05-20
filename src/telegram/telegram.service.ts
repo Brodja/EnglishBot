@@ -15,7 +15,11 @@ import {
   learnedWordsKeyboard,
   reviewMenuKeyboard,
 } from './keyboards/main-menu.keyboard';
-import { HELP_TEXT, formatChangelog, ChangelogEntry } from './changelog';
+import {
+  HELP_TEXT,
+  getChangelogPage,
+  formatAnnouncementChunks,
+} from './changelog';
 
 @Injectable()
 export class TelegramService implements OnModuleInit {
@@ -264,7 +268,10 @@ export class TelegramService implements OnModuleInit {
     });
 
     this.bot.hears('📝 Оновлення', async (ctx) => {
-      await ctx.reply(formatChangelog(), this.mainMenu(ctx));
+      const page = getChangelogPage(0);
+      await ctx.reply(page.text, {
+        reply_markup: { inline_keyboard: this.buildChangelogNav(page) },
+      });
     });
 
     this.bot.hears('📨 Запропонувати / баг', async (ctx) => {
@@ -297,11 +304,18 @@ export class TelegramService implements OnModuleInit {
         return;
       }
       const userCount = await this.userService.countAll();
+      const chunks = formatAnnouncementChunks(entries);
+      const restCount = chunks.length - 1;
+      const restLabel = restCount === 1 ? 'чанк' : 'чанки';
+      const preview =
+        restCount > 0 ? `${chunks[0]}\n\n... (ще ${restCount} ${restLabel})` : chunks[0];
+
       await ctx.reply(
         `📢 Готовий анонс для розсилки\n\n` +
           `📦 Записів: ${entries.length}\n` +
+          `📨 Чанків на юзера: ${chunks.length}\n` +
           `👥 Юзерів: ${userCount}\n\n` +
-          `Превʼю повідомлення:\n\n──────────────\n${this.formatAnnouncementText(entries)}\n──────────────`,
+          `Превʼю першого чанку:\n──────────────\n${preview}\n──────────────`,
         {
           reply_markup: {
             inline_keyboard: [
@@ -424,6 +438,20 @@ export class TelegramService implements OnModuleInit {
           `📚 Керування вивченими словами\n\nУ вас ${learned.length} вивчених слів`,
           learnedWordsKeyboard(),
         );
+        return;
+      }
+
+      if (data.startsWith('chlog_')) {
+        const offset = Number.parseInt(data.slice('chlog_'.length), 10) || 0;
+        const page = getChangelogPage(offset);
+        try {
+          await ctx.editMessageText(page.text, {
+            reply_markup: { inline_keyboard: this.buildChangelogNav(page) },
+          });
+        } catch {
+          /* same content — ігноруємо */
+        }
+        await ctx.answerCbQuery();
         return;
       }
 
@@ -611,17 +639,21 @@ export class TelegramService implements OnModuleInit {
     ctx.session = {};
   }
 
-  private formatAnnouncementText(entries: ChangelogEntry[]): string {
-    const body = entries
-      .map(
-        (e) =>
-          `📅 ${e.date} — ${e.title}\n${e.items.map((i) => `• ${i}`).join('\n')}`,
-      )
-      .join('\n\n');
-    return (
-      `🆕 Оновлення в боті\n\n${body}\n\n` +
-      `💡 Усі оновлення доступні через кнопку «📝 Оновлення».`
-    );
+  private buildChangelogNav(page: { offset: number; pageSize: number; hasPrev: boolean; hasMore: boolean }) {
+    const row: { text: string; callback_data: string }[] = [];
+    if (page.hasPrev) {
+      row.push({
+        text: '⬅️ Новіші',
+        callback_data: `chlog_${Math.max(0, page.offset - page.pageSize)}`,
+      });
+    }
+    if (page.hasMore) {
+      row.push({
+        text: '📜 Старіші',
+        callback_data: `chlog_${page.offset + page.pageSize}`,
+      });
+    }
+    return row.length > 0 ? [row] : [];
   }
 
   private async handleBroadcast(ctx: BotContext) {
@@ -634,15 +666,15 @@ export class TelegramService implements OnModuleInit {
     await ctx.editMessageText(`⏳ Розсилаю ${entries.length} записів...`);
 
     try {
-      const text = this.formatAnnouncementText(entries);
       const result = await this.announcementService.broadcast(
         entries,
-        text,
         this.bot,
         BigInt(ctx.from.id),
       );
       await ctx.reply(
         `✅ Розсилку завершено\n\n` +
+          `📦 Записів: ${entries.length}\n` +
+          `📨 Чанків на юзера: ${result.chunks}\n` +
           `📤 Доставлено: ${result.recipients}\n` +
           `❌ Помилок: ${result.failures}`,
         this.mainMenu(ctx),

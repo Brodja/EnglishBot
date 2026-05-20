@@ -77,12 +77,82 @@ export const CHANGELOG: ChangelogEntry[] = [
   },
 ];
 
-export function formatChangelog(): string {
-  if (CHANGELOG.length === 0) return '📝 Поки що немає записів про оновлення.';
+export const CHANGELOG_PAGE_SIZE = 5;
 
-  return CHANGELOG.map(
-    (e) => `📅 ${e.date} — ${e.title}\n\n${e.items.map((i) => `• ${i}`).join('\n')}`,
-  ).join('\n\n━━━━━━━━━━━━━━━\n\n');
+export interface ChangelogPage {
+  text: string;
+  offset: number;
+  pageSize: number;
+  total: number;
+  hasPrev: boolean;
+  hasMore: boolean;
+}
+
+const formatEntry = (e: ChangelogEntry) =>
+  `📅 ${e.date} — ${e.title}\n\n${e.items.map((i) => `• ${i}`).join('\n')}`;
+
+/**
+ * Сторінка changelog для перегляду в боті.
+ * offset рахується від найновішого запису.
+ */
+export function getChangelogPage(offset = 0, pageSize = CHANGELOG_PAGE_SIZE): ChangelogPage {
+  const total = CHANGELOG.length;
+  const slice = CHANGELOG.slice(offset, offset + pageSize);
+
+  let text: string;
+  if (total === 0) {
+    text = '📝 Поки що немає записів про оновлення.';
+  } else {
+    const header =
+      total > pageSize
+        ? `📝 Оновлення (${offset + 1}–${Math.min(offset + slice.length, total)} з ${total})\n\n`
+        : '📝 Оновлення\n\n';
+    text = header + slice.map(formatEntry).join('\n\n━━━━━━━━━━━━━━━\n\n');
+  }
+
+  return {
+    text,
+    offset,
+    pageSize,
+    total,
+    hasPrev: offset > 0,
+    hasMore: offset + pageSize < total,
+  };
+}
+
+/**
+ * Розбиває entries на чанки що влізуть у Telegram-повідомлення (4096 char limit).
+ * Не ріже всередині одного запису.
+ */
+export function formatAnnouncementChunks(
+  entries: ChangelogEntry[],
+  maxChunkLength = 3800,
+): string[] {
+  if (entries.length === 0) return [];
+
+  const header = '🆕 Оновлення в боті';
+  const footer = '\n\n💡 Усі оновлення доступні через кнопку «📝 Оновлення».';
+
+  const bodies: string[] = [];
+  let current = '';
+  for (const entry of entries) {
+    const part = formatEntry(entry);
+    const candidate = current ? `${current}\n\n${part}` : part;
+    const wrapped = `${header}\n\n${candidate}${footer}`;
+    if (wrapped.length > maxChunkLength && current) {
+      bodies.push(current);
+      current = part;
+    } else {
+      current = candidate;
+    }
+  }
+  if (current) bodies.push(current);
+
+  const total = bodies.length;
+  return bodies.map((body, i) => {
+    const marker = total > 1 ? ` (${i + 1}/${total})` : '';
+    return `${header}${marker}\n\n${body}${footer}`;
+  });
 }
 
 export const HELP_TEXT =

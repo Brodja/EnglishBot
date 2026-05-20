@@ -1,11 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Telegraf } from 'telegraf';
 import { PrismaService } from '../prisma/prisma.service';
-import { CHANGELOG, ChangelogEntry } from '../telegram/changelog';
+import { CHANGELOG, ChangelogEntry, formatAnnouncementChunks } from '../telegram/changelog';
 
 export interface BroadcastResult {
   recipients: number;
   failures: number;
+  chunks: number;
 }
 
 const RATE_LIMIT_MS = 35; // ~28 msg/s, безпечно під telegram-лімітом 30/s
@@ -37,12 +38,11 @@ export class AnnouncementService {
   }
 
   /**
-   * Розсилає текст усім юзерам. Юзери з заблокованим ботом ловляться у failures.
-   * Зберігає записи у Announcement для всіх entries (idempotent).
+   * Розбиває entries на чанки <=3800 символів і шле всі чанки кожному юзеру по черзі.
+   * Маркує всі entries як відправлені атомарно після завершення.
    */
   async broadcast(
     entries: ChangelogEntry[],
-    text: string,
     bot: Telegraf,
     sentBy: bigint,
   ): Promise<BroadcastResult> {
@@ -50,7 +50,6 @@ export class AnnouncementService {
       throw new Error('Немає записів для розсилки');
     }
 
-    // Захист від конкурентного запуску
     const ids = entries.map((e) => e.id);
     const alreadySent = await this.prisma.announcement.findMany({
       where: { changelogId: { in: ids } },
@@ -62,24 +61,29 @@ export class AnnouncementService {
       );
     }
 
+    const chunks = formatAnnouncementChunks(entries);
     const users = await this.prisma.user.findMany({ select: { telegramId: true } });
     let recipients = 0;
     let failures = 0;
 
     for (const u of users) {
-      try {
-        await bot.telegram.sendMessage(u.telegramId.toString(), text);
-        recipients++;
-      } catch (err) {
-        failures++;
-        this.logger.warn(
-          `Не вдалося надіслати юзеру ${u.telegramId}: ${(err as Error).message}`,
-        );
+      let userOk = true;
+      for (const chunk of chunks) {
+        try {
+          await bot.telegram.sendMessage(u.telegramId.toString(), chunk);
+        } catch (err) {
+          userOk = false;
+          this.logger.warn(
+            `Не вдалося надіслати юзеру ${u.telegramId}: ${(err as Error).message}`,
+          );
+          break;
+        }
+        await new Promise((r) => setTimeout(r, RATE_LIMIT_MS));
       }
-      await new Promise((r) => setTimeout(r, RATE_LIMIT_MS));
+      if (userOk) recipients++;
+      else failures++;
     }
 
-    // Маркуємо ВСІ entries як розіслані (одна розсилка = один пакет)
     await this.prisma.announcement.createMany({
       data: entries.map((e) => ({
         changelogId: e.id,
@@ -90,8 +94,8 @@ export class AnnouncementService {
     });
 
     this.logger.log(
-      `Розіслано пакет з ${entries.length} записів: ${recipients} success, ${failures} failures`,
+      `Розіслано ${entries.length} entries у ${chunks.length} чанках: ${recipients} success, ${failures} failures`,
     );
-    return { recipients, failures };
+    return { recipients, failures, chunks: chunks.length };
   }
 }
