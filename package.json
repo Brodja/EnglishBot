@@ -4,6 +4,7 @@
   "description": "Telegram bot for learning English words from Google Sheets",
   "main": "dist/main.js",
   "scripts": {
+    "postinstall": "prisma generate",
     "setup": "node setup.js",
     "build": "nest build",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
