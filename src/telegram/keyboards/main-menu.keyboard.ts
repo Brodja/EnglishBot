@@ -1,13 +1,15 @@
 import { Markup } from 'telegraf';
 
-export const mainMenuKeyboard = () =>
-  Markup.keyboard([
+export const mainMenuKeyboard = (isAdmin = false) => {
+  const rows: string[][] = [
     ['📚 Перейти до навчання'],
     ['🔄 Синхронізувати', '🔗 Додати посилання'],
     ['ℹ️ Допомога', '📝 Оновлення'],
-  ])
-    .resize()
-    .persistent();
+    ['📨 Запропонувати / баг'],
+  ];
+  if (isAdmin) rows.push(['📥 Повідомлення']);
+  return Markup.keyboard(rows).resize().persistent();
+};
 
 export const learningMenuKeyboard = () =>
   Markup.keyboard([

@@ -6,6 +6,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { TelegramModule } from './telegram/telegram.module';
 import { UserModule } from './user/user.module';
 import { GoogleSheetsModule } from './google-sheets/google-sheets.module';
+import { FeedbackModule } from './feedback/feedback.module';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { GoogleSheetsModule } from './google-sheets/google-sheets.module';
     TelegramModule,
     UserModule,
     GoogleSheetsModule,
+    FeedbackModule,
   ],
 })
 export class AppModule {}

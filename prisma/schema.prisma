@@ -19,8 +19,22 @@ model User {
   updatedAt       DateTime  @updatedAt
 
   words           Word[]
+  feedbacks       Feedback[]
 
   @@map("users")
+}
+
+model Feedback {
+  id        String   @id @default(cuid())
+  userId    BigInt
+  text      String
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [telegramId], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([createdAt])
+  @@map("feedbacks")
 }
 
 model Word {

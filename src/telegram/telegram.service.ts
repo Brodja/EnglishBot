@@ -7,6 +7,7 @@ import { UserService } from '../user/user.service';
 import { GoogleSheetsService } from '../google-sheets/google-sheets.service';
 import { WordsService, LearningMode } from './services/words.service';
 import { SyncService, SyncResult } from './services/sync.service';
+import { FeedbackService, FeedbackRateLimitError } from '../feedback/feedback.service';
 import {
   mainMenuKeyboard,
   learningMenuKeyboard,
@@ -23,20 +24,32 @@ export class TelegramService implements OnModuleInit {
     return text.replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
   }
 
+  private readonly adminIds: ReadonlySet<string>;
+
   constructor(
     private readonly configService: ConfigService,
     private readonly userService: UserService,
     private readonly googleSheetsService: GoogleSheetsService,
     private readonly wordsService: WordsService,
     private readonly syncService: SyncService,
+    private readonly feedbackService: FeedbackService,
   ) {
     const token = this.configService.get<string>('telegram.apiKey');
     if (!token) {
       throw new Error('Telegram API key is not provided');
     }
+    this.adminIds = new Set(this.configService.get<string[]>('admin.telegramIds') ?? []);
     this.bot = new Telegraf<BotContext>(token);
     this.bot.use(session());
     this.setupBotHandlers();
+  }
+
+  private isAdmin(telegramId: bigint): boolean {
+    return this.adminIds.has(telegramId.toString());
+  }
+
+  private mainMenu(ctx: BotContext) {
+    return mainMenuKeyboard(this.isAdmin(BigInt(ctx.from.id)));
   }
 
   async onModuleInit() {
@@ -69,7 +82,7 @@ export class TelegramService implements OnModuleInit {
         `Привіт, ${u.first_name}! 👋\n\n` +
           `Я бот для вивчення англійських слів з Google Sheets.\n\n` +
           `Спочатку додайте посилання на вашу таблицю, потім натисніть "🔄 Синхронізувати" — і можна вчитися!`,
-        mainMenuKeyboard(),
+        this.mainMenu(ctx),
       );
     });
 
@@ -78,7 +91,7 @@ export class TelegramService implements OnModuleInit {
       if (!user?.googleSheetsUrl) {
         await ctx.reply(
           '❌ Спочатку додайте посилання на Google Sheets!',
-          mainMenuKeyboard(),
+          this.mainMenu(ctx),
         );
         return;
       }
@@ -87,7 +100,7 @@ export class TelegramService implements OnModuleInit {
       if (stats.total === 0) {
         await ctx.reply(
           '❌ У вашому словнику ще немає слів.\n\nНатисніть "🔄 Синхронізувати" щоб завантажити їх з таблиці.',
-          mainMenuKeyboard(),
+          this.mainMenu(ctx),
         );
         return;
       }
@@ -130,7 +143,7 @@ export class TelegramService implements OnModuleInit {
       if (!user?.googleSheetsUrl) {
         await ctx.reply(
           '❌ Спочатку додайте посилання на Google Sheets!',
-          mainMenuKeyboard(),
+          this.mainMenu(ctx),
         );
         return;
       }
@@ -217,22 +230,43 @@ export class TelegramService implements OnModuleInit {
     });
 
     this.bot.hears('⬅️ Назад', async (ctx) => {
-      await ctx.reply('Головне меню:', mainMenuKeyboard());
+      await ctx.reply('Головне меню:', this.mainMenu(ctx));
     });
 
     this.bot.hears('ℹ️ Допомога', async (ctx) => {
-      await ctx.reply(HELP_TEXT, mainMenuKeyboard());
+      await ctx.reply(HELP_TEXT, this.mainMenu(ctx));
     });
 
     this.bot.hears('📝 Оновлення', async (ctx) => {
-      await ctx.reply(formatChangelog(), mainMenuKeyboard());
+      await ctx.reply(formatChangelog(), this.mainMenu(ctx));
+    });
+
+    this.bot.hears('📨 Запропонувати / баг', async (ctx) => {
+      await ctx.reply(
+        '📨 Напишіть ваше повідомлення (баг чи побажання).\n\n' +
+          'Воно піде розробнику. Обмеження — 1 повідомлення на годину.',
+      );
+      ctx.session = { awaitingFeedback: true };
+    });
+
+    this.bot.hears('📥 Повідомлення', async (ctx) => {
+      if (!this.isAdmin(BigInt(ctx.from.id))) {
+        await ctx.reply('❌ Це адмін-функція.', this.mainMenu(ctx));
+        return;
+      }
+      await ctx.reply(await this.formatFeedbackList(), this.mainMenu(ctx));
     });
 
     this.bot.on('text', async (ctx) => {
+      if (ctx.session?.awaitingFeedback) {
+        await this.handleFeedbackText(ctx, ctx.message.text.trim());
+        return;
+      }
+
       if (!ctx.session?.awaitingSheetUrl) {
         await ctx.reply(
           'Використовуйте кнопки меню для навігації 👇',
-          mainMenuKeyboard(),
+          this.mainMenu(ctx),
         );
         return;
       }
@@ -258,7 +292,7 @@ export class TelegramService implements OnModuleInit {
           undefined,
           `✅ Посилання збережено!\n\n` + this.formatSyncResult(result),
         );
-        await ctx.reply('Можна переходити до навчання!', mainMenuKeyboard());
+        await ctx.reply('Можна переходити до навчання!', this.mainMenu(ctx));
       } catch (error) {
         this.logger.error('Error processing sheet URL:', error);
         await ctx.reply(
@@ -409,5 +443,70 @@ export class TelegramService implements OnModuleInit {
       `➖ Видалено: ${r.removed}\n` +
       `📊 Всього в словнику: ${r.total}`
     );
+  }
+
+  private async handleFeedbackText(ctx: BotContext, text: string) {
+    const userId = BigInt(ctx.from.id);
+
+    if (!text) {
+      await ctx.reply('❌ Порожнє повідомлення. Спробуйте ще раз.');
+      return;
+    }
+
+    try {
+      await this.feedbackService.create(userId, text);
+
+      await ctx.reply(
+        '✅ Дякую! Повідомлення надіслано розробнику.',
+        this.mainMenu(ctx),
+      );
+
+      // Пересилаємо адмінам
+      const u = ctx.from;
+      const name = u.first_name + (u.last_name ? ` ${u.last_name}` : '');
+      const handle = u.username ? `@${u.username}` : '—';
+      const adminMsg =
+        `📨 Нове повідомлення\n\n` +
+        `👤 ${name} (${handle})\n` +
+        `🆔 ${u.id}\n\n` +
+        `──────────────\n${text}\n──────────────`;
+
+      for (const adminId of this.adminIds) {
+        try {
+          await this.bot.telegram.sendMessage(adminId, adminMsg);
+        } catch (err) {
+          this.logger.error(`Не вдалось переслати feedback адміну ${adminId}:`, err);
+        }
+      }
+    } catch (err) {
+      if (err instanceof FeedbackRateLimitError) {
+        await ctx.reply(
+          `⏳ Зачекайте ще ${err.waitMinutes} хв перед наступним повідомленням.`,
+          this.mainMenu(ctx),
+        );
+      } else {
+        this.logger.error('Feedback save error:', err);
+        await ctx.reply('❌ Не вдалося зберегти. Спробуйте пізніше.', this.mainMenu(ctx));
+      }
+    }
+
+    ctx.session = {};
+  }
+
+  private async formatFeedbackList(): Promise<string> {
+    const items = await this.feedbackService.listRecent(20);
+    if (items.length === 0) return '📥 Поки що немає повідомлень.';
+
+    const lines = items.map((f, i) => {
+      const d = f.createdAt;
+      const date = `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+      const u = f.user;
+      const name = u.firstName || 'без імені';
+      const handle = u.username ? `@${u.username}` : `id:${u.telegramId}`;
+      const truncated = f.text.length > 300 ? f.text.slice(0, 300) + '…' : f.text;
+      return `${i + 1}. ${date} — ${name} (${handle})\n${truncated}`;
+    });
+
+    return `📥 Останні ${items.length} повідомлень:\n\n${lines.join('\n\n')}`;
   }
 }
