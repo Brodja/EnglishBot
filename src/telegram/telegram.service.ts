@@ -12,6 +12,7 @@ import {
   learningMenuKeyboard,
   learnedWordsKeyboard,
 } from './keyboards/main-menu.keyboard';
+import { HELP_TEXT, formatChangelog } from './changelog';
 
 @Injectable()
 export class TelegramService implements OnModuleInit {
@@ -214,6 +215,14 @@ export class TelegramService implements OnModuleInit {
 
     this.bot.hears('⬅️ Назад', async (ctx) => {
       await ctx.reply('Головне меню:', mainMenuKeyboard());
+    });
+
+    this.bot.hears('ℹ️ Допомога', async (ctx) => {
+      await ctx.reply(HELP_TEXT, mainMenuKeyboard());
+    });
+
+    this.bot.hears('📝 Оновлення', async (ctx) => {
+      await ctx.reply(formatChangelog(), mainMenuKeyboard());
     });
 
     this.bot.on('text', async (ctx) => {
