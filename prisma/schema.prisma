@@ -1,0 +1,9 @@
+// Prisma Schema for English Learning Telegram Bot
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
