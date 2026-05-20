@@ -17,10 +17,15 @@
  */
 
 import 'dotenv/config';
+import * as dns from 'node:dns';
 import mongoose from 'mongoose';
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
+
+// MongoDB Atlas SRV-lookup потребує робочого DNS. Системний DNS може не підтримувати/блокувати SRV —
+// явно ставимо публічні резолвери для цього процесу.
+dns.setServers(['8.8.8.8', '1.1.1.1']);
 
 interface LegacyUser {
   telegramId: number;
@@ -38,6 +43,12 @@ async function main() {
     process.exit(1);
   }
 
+  const pgUri = process.env.DATABASE_URL;
+  if (!pgUri) {
+    console.error('❌ DATABASE_URL env var is required (check your .env file)');
+    process.exit(1);
+  }
+
   const dryRun = process.argv.includes('--dry-run');
   if (dryRun) console.log('🟡 DRY RUN — нічого не пишемо в Postgres');
 
@@ -48,11 +59,12 @@ async function main() {
 
   // --- Connect Postgres ---
   console.log('🔌 Connecting to Postgres...');
-  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  const pool = new Pool({ connectionString: pgUri });
   const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
   await prisma.$connect();
 
   let userCount = 0;
+  let skippedNoUrl = 0;
   let wordCount = 0;
   let skippedWords = 0;
 
@@ -61,6 +73,12 @@ async function main() {
     while (await cursor.hasNext()) {
       const u = await cursor.next();
       if (!u || typeof u.telegramId !== 'number') continue;
+
+      // Скіпаємо юзерів від іншого бота (без посилання на таблицю)
+      if (!u.googleSheetsUrl) {
+        skippedNoUrl++;
+        continue;
+      }
 
       const telegramId = BigInt(u.telegramId);
       const learned = (u.learnedWords ?? []).map((w) => w.toLowerCase().trim()).filter(Boolean);
@@ -118,7 +136,9 @@ async function main() {
   }
 
   console.log('');
-  console.log(`✅ Done. Users: ${userCount}, learned words: ${wordCount}, skipped: ${skippedWords}`);
+  console.log(
+    `✅ Done. Users: ${userCount}, skipped (no sheet URL): ${skippedNoUrl}, learned words: ${wordCount}, skipped words: ${skippedWords}`,
+  );
   if (wordCount > 0) {
     console.log(
       '💡 Translations are empty. Ask users to press "🔄 Синхронізувати" to fill them from Google Sheets.',
