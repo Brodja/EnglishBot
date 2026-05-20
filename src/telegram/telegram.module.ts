@@ -1,11 +1,12 @@
 import { Module } from '@nestjs/common';
 import { TelegramService } from './telegram.service';
 import { WordsService } from './services/words.service';
+import { SyncService } from './services/sync.service';
 import { UserModule } from '../user/user.module';
 import { GoogleSheetsModule } from '../google-sheets/google-sheets.module';
 
 @Module({
   imports: [UserModule, GoogleSheetsModule],
-  providers: [TelegramService, WordsService],
+  providers: [TelegramService, WordsService, SyncService],
 })
 export class TelegramModule {}

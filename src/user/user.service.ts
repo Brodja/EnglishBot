@@ -1,101 +1,36 @@
 import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
-import { User, UserDocument } from './schemas/user.schema';
+import { User } from '@prisma/client';
+import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
 export class UserService {
-  constructor(@InjectModel(User.name) private userModel: Model<UserDocument>) {}
+  constructor(private readonly prisma: PrismaService) {}
 
-  async findByTelegramId(telegramId: number): Promise<UserDocument | null> {
-    return this.userModel.findOne({ telegramId }).exec();
+  async findByTelegramId(telegramId: bigint): Promise<User | null> {
+    return this.prisma.user.findUnique({ where: { telegramId } });
   }
 
-  async createUser(userData: {
-    telegramId: number;
+  async upsertUser(data: {
+    telegramId: bigint;
     firstName?: string;
     lastName?: string;
     username?: string;
-  }): Promise<UserDocument> {
-    const user = new this.userModel(userData);
-    return user.save();
-  }
-
-  async updateGoogleSheetsUrl(telegramId: number, url: string): Promise<UserDocument> {
-    console.log(`[UserService] Оновлюємо URL для користувача ${telegramId}: ${url}`);
-    
-    const result = await this.userModel.findOneAndUpdate(
-      { telegramId },
-      { googleSheetsUrl: url },
-      { new: true, upsert: true }
-    ).exec();
-    
-    console.log(`[UserService] Результат оновлення:`, result?.googleSheetsUrl ? '✅ Збережено' : '❌ Помилка');
-    return result;
-  }
-
-  async updateCachedWords(
-    telegramId: number,
-    words: Array<{ english: string; translation: string }>
-  ): Promise<UserDocument> {
-    return this.userModel.findOneAndUpdate(
-      { telegramId },
-      {
-        cachedWords: {
-          words,
-          lastUpdated: new Date(),
-        },
-        lastDataUpdate: new Date(),
+  }): Promise<User> {
+    return this.prisma.user.upsert({
+      where: { telegramId: data.telegramId },
+      create: data,
+      update: {
+        firstName: data.firstName,
+        lastName: data.lastName,
+        username: data.username,
       },
-      { new: true }
-    ).exec();
+    });
   }
 
-  async updateProgress(
-    telegramId: number,
-    type: 'english' | 'translation',
-    shownIndices: number[]
-  ): Promise<UserDocument> {
-    const updateField = type === 'english' ? 'progress.englishShown' : 'progress.translationShown';
-    
-    return this.userModel.findOneAndUpdate(
-      { telegramId },
-      { [updateField]: shownIndices },
-      { new: true }
-    ).exec();
-  }
-
-  async resetProgress(telegramId: number): Promise<UserDocument> {
-    return this.userModel.findOneAndUpdate(
-      { telegramId },
-      {
-        progress: {
-          englishShown: [],
-          translationShown: [],
-        },
-      },
-      { new: true }
-    ).exec();
-  }
-
-  async addLearnedWord(telegramId: number, word: string): Promise<UserDocument> {
-    return this.userModel.findOneAndUpdate(
-      { telegramId },
-      { $addToSet: { learnedWords: word.toLowerCase() } }, // $addToSet не додає дублікати
-      { new: true, upsert: true }
-    ).exec();
-  }
-
-  async removeLearnedWord(telegramId: number, word: string): Promise<UserDocument> {
-    return this.userModel.findOneAndUpdate(
-      { telegramId },
-      { $pull: { learnedWords: word.toLowerCase() } },
-      { new: true }
-    ).exec();
-  }
-
-  async getLearnedWords(telegramId: number): Promise<string[]> {
-    const user = await this.userModel.findOne({ telegramId }).exec();
-    return user?.learnedWords || [];
+  async setGoogleSheetsUrl(telegramId: bigint, url: string): Promise<User> {
+    return this.prisma.user.update({
+      where: { telegramId },
+      data: { googleSheetsUrl: url },
+    });
   }
 }

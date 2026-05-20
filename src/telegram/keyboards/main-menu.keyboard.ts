@@ -3,7 +3,7 @@ import { Markup } from 'telegraf';
 export const mainMenuKeyboard = () =>
   Markup.keyboard([
     ['📚 Перейти до навчання'],
-    ['🔗 Додати посилання'],
+    ['🔄 Синхронізувати', '🔗 Додати посилання'],
   ])
     .resize()
     .persistent();
@@ -13,6 +13,7 @@ export const learningMenuKeyboard = () =>
     ['🇺🇸 Отримати англійське слово'],
     ['🇺🇦 Отримати переклад'],
     ['📚 Керувати вивченими словами'],
+    ['🔄 Синхронізувати'],
     ['⬅️ Назад'],
   ])
     .resize()
