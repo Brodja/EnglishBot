@@ -15,9 +15,16 @@ export interface WordStats {
 }
 
 const FIELDS = {
-  en: { passed: 'passedEn', learned: 'learnedEn' },
-  uk: { passed: 'passedUk', learned: 'learnedUk' },
+  en: { passed: 'passedEn', learned: 'learnedEn', review: 'reviewCountEn' },
+  uk: { passed: 'passedUk', learned: 'learnedUk', review: 'reviewCountUk' },
 } as const;
+
+export interface ReviewStats {
+  learnedEn: number;
+  learnedUk: number;
+  minReviewCountEn: number | null;
+  minReviewCountUk: number | null;
+}
 
 @Injectable()
 export class WordsService {
@@ -126,6 +133,70 @@ export class WordsService {
       },
       orderBy: { english: 'asc' },
     });
+  }
+
+  /**
+   * Випадкове вивчене слово з мінімальним лічильником повторень у цьому напрямку.
+   * Серед слів з однаковим лічильником — рандом.
+   */
+  async getReviewWord(telegramId: bigint, mode: LearningMode): Promise<Word> {
+    const { learned: learnedField, review: countField } = FIELDS[mode];
+
+    const minAgg = await this.prisma.word.aggregate({
+      where: { userId: telegramId, [learnedField]: true },
+      _min: { [countField]: true },
+    });
+
+    const minCount = (minAgg._min as Record<string, number | null>)[countField];
+    if (minCount === null || minCount === undefined) {
+      throw new Error(
+        `Немає вивчених слів у напрямку "${mode === 'en' ? '🇺🇸 → 🇺🇦' : '🇺🇦 → 🇺🇸'}". ` +
+          `Спочатку повчіть їх у меню навчання.`,
+      );
+    }
+
+    const where = {
+      userId: telegramId,
+      [learnedField]: true,
+      [countField]: minCount,
+    };
+    const total = await this.prisma.word.count({ where });
+    const skip = Math.floor(Math.random() * total);
+    const word = await this.prisma.word.findFirst({ where, skip });
+
+    if (!word) {
+      throw new Error('Не вдалося знайти слово для повторення');
+    }
+    return word;
+  }
+
+  async markReviewed(wordId: string, mode: LearningMode): Promise<void> {
+    const { review: countField } = FIELDS[mode];
+    await this.prisma.word.update({
+      where: { id: wordId },
+      data: { [countField]: { increment: 1 } },
+    });
+  }
+
+  async getReviewStats(telegramId: bigint): Promise<ReviewStats> {
+    const [learnedEn, learnedUk, minEn, minUk] = await Promise.all([
+      this.prisma.word.count({ where: { userId: telegramId, learnedEn: true } }),
+      this.prisma.word.count({ where: { userId: telegramId, learnedUk: true } }),
+      this.prisma.word.aggregate({
+        where: { userId: telegramId, learnedEn: true },
+        _min: { reviewCountEn: true },
+      }),
+      this.prisma.word.aggregate({
+        where: { userId: telegramId, learnedUk: true },
+        _min: { reviewCountUk: true },
+      }),
+    ]);
+    return {
+      learnedEn,
+      learnedUk,
+      minReviewCountEn: minEn._min.reviewCountEn,
+      minReviewCountUk: minUk._min.reviewCountUk,
+    };
   }
 
   async getStats(telegramId: bigint): Promise<WordStats> {

@@ -12,6 +12,7 @@ import {
   mainMenuKeyboard,
   learningMenuKeyboard,
   learnedWordsKeyboard,
+  reviewMenuKeyboard,
 } from './keyboards/main-menu.keyboard';
 import { HELP_TEXT, formatChangelog } from './changelog';
 
@@ -174,6 +175,29 @@ export class TelegramService implements OnModuleInit {
     this.bot.hears('🇺🇦 Отримати переклад', (ctx) =>
       this.handleGetWord(ctx, 'uk'),
     );
+
+    this.bot.hears('🔁 Перейти до повторення', async (ctx) => {
+      const stats = await this.wordsService.getReviewStats(BigInt(ctx.from.id));
+      if (stats.learnedEn === 0 && stats.learnedUk === 0) {
+        await ctx.reply(
+          '❌ У вас ще немає вивчених слів. Спочатку повчи їх у меню навчання.',
+          this.mainMenu(ctx),
+        );
+        return;
+      }
+      await ctx.reply(
+        `🔁 Меню повторення\n\n` +
+          `🇺🇸 Вивчених: ${stats.learnedEn}` +
+          (stats.minReviewCountEn !== null ? ` (рівень: ${stats.minReviewCountEn})` : '') +
+          `\n🇺🇦 Вивчених: ${stats.learnedUk}` +
+          (stats.minReviewCountUk !== null ? ` (рівень: ${stats.minReviewCountUk})` : '') +
+          `\n\n💡 Випадає слово з найменшим лічильником повторень.`,
+        reviewMenuKeyboard(),
+      );
+    });
+
+    this.bot.hears('🇺🇸 Повторити англійське', (ctx) => this.handleReviewWord(ctx, 'en'));
+    this.bot.hears('🇺🇦 Повторити переклад', (ctx) => this.handleReviewWord(ctx, 'uk'));
 
     this.bot.hears('📚 Керувати вивченими словами', async (ctx) => {
       const learned = await this.wordsService.getLearnedWords(
@@ -371,6 +395,24 @@ export class TelegramService implements OnModuleInit {
         return;
       }
 
+      if (data.startsWith('reviewed_')) {
+        // format: reviewed_<wordId>_<mode>
+        const rest = data.slice('reviewed_'.length);
+        const lastSep = rest.lastIndexOf('_');
+        const wordId = rest.slice(0, lastSep);
+        const mode = rest.slice(lastSep + 1) as LearningMode;
+        try {
+          await this.wordsService.markReviewed(wordId, mode);
+          await ctx.editMessageReplyMarkup({
+            inline_keyboard: [[{ text: '✅ Повторив +1', callback_data: 'noop' }]],
+          });
+          await ctx.answerCbQuery('✅ +1 до лічильника повторень');
+        } catch {
+          await ctx.answerCbQuery('❌ Слово вже не існує');
+        }
+        return;
+      }
+
       if (data === 'noop') {
         await ctx.answerCbQuery();
       }
@@ -380,6 +422,33 @@ export class TelegramService implements OnModuleInit {
       this.logger.error(`Bot error for ${ctx.updateType}:`, err);
       ctx.reply('Виникла помилка. Спробуйте ще раз.');
     });
+  }
+
+  private async handleReviewWord(ctx: BotContext, mode: LearningMode) {
+    try {
+      const word = await this.wordsService.getReviewWord(BigInt(ctx.from.id), mode);
+      const front = mode === 'en' ? word.english : word.translation;
+      const back = mode === 'en' ? word.translation : word.english;
+      const frontFlag = mode === 'en' ? '🇺🇸' : '🇺🇦';
+      const backFlag = mode === 'en' ? '🇺🇦' : '🇺🇸';
+      const count = mode === 'en' ? word.reviewCountEn : word.reviewCountUk;
+
+      await ctx.reply(
+        `${frontFlag} *${this.escapeMarkdownV2(front)}*\n\n` +
+          `${backFlag} ||${this.escapeMarkdownV2(back)}||\n\n` +
+          `🔁 Повторень: ${count}`,
+        {
+          parse_mode: 'MarkdownV2',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '✅ Повторив', callback_data: `reviewed_${word.id}_${mode}` }],
+            ],
+          },
+        },
+      );
+    } catch (error) {
+      await ctx.reply(`❌ ${error.message}`, reviewMenuKeyboard());
+    }
   }
 
   private async handleGetWord(ctx: BotContext, mode: LearningMode) {

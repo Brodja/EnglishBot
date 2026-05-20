@@ -2,7 +2,7 @@ import { Markup } from 'telegraf';
 
 export const mainMenuKeyboard = (isAdmin = false) => {
   const rows: string[][] = [
-    ['📚 Перейти до навчання'],
+    ['📚 Перейти до навчання', '🔁 Перейти до повторення'],
     ['🔄 Синхронізувати', '🔗 Додати посилання'],
     ['ℹ️ Допомога', '📝 Оновлення'],
     ['📨 Запропонувати / баг'],
@@ -10,6 +10,14 @@ export const mainMenuKeyboard = (isAdmin = false) => {
   if (isAdmin) rows.push(['📥 Повідомлення']);
   return Markup.keyboard(rows).resize().persistent();
 };
+
+export const reviewMenuKeyboard = () =>
+  Markup.keyboard([
+    ['🇺🇸 Повторити англійське', '🇺🇦 Повторити переклад'],
+    ['⬅️ Назад'],
+  ])
+    .resize()
+    .persistent();
 
 export const learningMenuKeyboard = () =>
   Markup.keyboard([
