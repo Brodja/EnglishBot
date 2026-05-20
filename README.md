@@ -1,160 +1,118 @@
 # English Learning Telegram Bot
 
-Telegram бот для вивчення англійських слів з Google Sheets таблиць, створений на NestJS.
+Telegram бот для вивчення англійських слів з Google Sheets. NestJS + Telegraf + PostgreSQL (Prisma).
 
-## Функціонал
+## Як це працює
 
-- 📚 **Навчання з Google Sheets**: Бот витягує слова з ваших Google Sheets таблиць
-- 🔄 **Кешування**: Дані оновлюються кожну годину для оптимальної продуктивності
-- 🎯 **Розумний вибір слів**: Система відстежує показані слова і не повторює їх до завершення циклу
-- 👥 **Мультикористувацький**: Кожен користувач має свої таблиці та прогрес
-- 🇺🇸🇺🇦 **Двосторонне навчання**: Можна отримувати як англійські слова, так і переклади
+1. Юзер додає посилання на свою Google Sheets таблицю.
+2. Натискає **"🔄 Синхронізувати"** — бот витягує слова з таблиці і зберігає у Postgres (diff: додає нові, оновлює змінені переклади, видаляє ті що зникли).
+3. У режимі навчання бот рандомно видає:
+   - 🇺🇸 англійське слово (переклад прихований через MarkdownV2 spoiler)
+   - 🇺🇦 переклад (англійське слово приховане)
+4. Кожне показане слово помічається `passedEn` або `passedUk` — щоб не повторювати в межах поточного циклу.
+5. Коли всі не-вивчені слова в межах режиму пройдені — цикл скидається автоматично, починається нове коло.
+6. Кнопка **"✅ Вивчено"** під словом ставить `learned=true` — таке слово більше не випадає у навчанні.
 
 ## Структура Google Sheets
 
-Ваша таблиця повинна мати наступну структуру:
-- **Колонка B**: Англійські слова
-- **Колонка D**: Переклади українською
+| Колонка | Що там |
+|---------|--------|
+| B | Англійське слово (обов'язково) |
+| C | Транскрипція (не використовується) |
+| D | Переклад |
+| E | Приклади (не використовується) |
+| F | Маркер "вивчено" — будь-який текст. Такі рядки фільтруються при синхронізації. |
 
-Приклад:
-```
-|   A   |     B      |   C   |      D       |
-|-------|------------|-------|--------------|
-| №     | English    | ...   | Переклад     |
-| 1     | hello      | ...   | привіт       |
-| 2     | world      | ...   | світ         |
-```
+Таблиця має бути публічна (Share → Anyone with the link → Viewer).
 
-## Встановлення та запуск
+## Запуск локально
 
-### 1. Клонування та встановлення залежностей
+### 1. Підняти PostgreSQL
 
 ```bash
-git clone <repository-url>
-cd english-telegram-bot
+docker compose -f docker/docker-compose.yml up -d
+```
+
+Це створює БД `englishbot` з юзером `englishbot/englishbot_pass` на `localhost:5432`. Дані зберігаються у volume `englishbot_pgdata`.
+
+### 2. Налаштувати `.env`
+
+```bash
+cp env.example .env
+```
+
+Заповнити:
+- `API_KEY` — токен від [@BotFather](https://t.me/BotFather)
+- `GOOGLE_SHEETS_API_KEY` — ключ з [Google Cloud Console](https://console.cloud.google.com/) (див. [GOOGLE_SHEETS_SETUP.md](GOOGLE_SHEETS_SETUP.md))
+- `DATABASE_URL` — для локалки залишається з шаблона
+
+### 3. Встановити залежності і прокатити міграції
+
+```bash
 npm install
+npx prisma migrate deploy
 ```
 
-### 2. Налаштування змінних середовища
-
-Створіть файл `.env` в корені проекту:
-
-```env
-# Telegram Bot Token (отримайте у @BotFather)
-API_KEY=your_telegram_bot_token_here
-
-# MongoDB Connection URI
-MONGO_URI=mongodb://localhost:27017/englishbot
-
-# Порт для додатку (опціонально)
-PORT=3000
-
-# Середовище
-NODE_ENV=development
-```
-
-### 3. Запуск MongoDB
-
-Переконайтеся що MongoDB запущений на вашому сервері:
+### 4. Запустити
 
 ```bash
-# Для Ubuntu/Debian
-sudo systemctl start mongod
-
-# Для macOS з Homebrew
-brew services start mongodb-community
-
-# Або використовуйте Docker
-docker run -d -p 27017:27017 --name mongodb mongo:latest
-```
-
-### 4. Запуск додатку
-
-```bash
-# Режим розробки
 npm run start:dev
-
-# Продакшн збірка
-npm run build
-npm run start:prod
 ```
 
-## Використання бота
+## Запуск у продакшені
 
-### 1. Запуск бота
-Надішліть команду `/start` боту в Telegram
+Що змінюється — тільки `DATABASE_URL` на робочий postgres та `npm run start:prod`. Решта так само.
 
-### 2. Додавання Google Sheets
-1. Натисніть кнопку "🔗 Додати посилання"
-2. Надішліть посилання на вашу Google Sheets таблицю
-3. Переконайтеся що таблиця доступна для перегляду (публічна)
+## Корисні команди
 
-### 3. Навчання
-1. Натисніть "📚 Перейти до навчання"
-2. Виберіть тип навчання:
-   - "🇺🇸 Отримати англійське слово" - показує англійське слово та його переклад
-   - "🇺🇦 Отримати переклад" - показує переклад та відповідне англійське слово
+```bash
+npm run start:dev              # dev з ватчем
+npm run build                  # tsc build у /dist
+npm run start:prod             # node dist/main.js
 
-## Архітектура проекту
+npm run prisma:generate        # перегенерувати Prisma client
+npm run prisma:migrate         # створити нову міграцію (dev)
+npm run prisma:migrate:deploy  # прокатити міграції (prod)
+npm run prisma:studio          # GUI на http://localhost:5555 для перегляду БД
+```
+
+## Структура
 
 ```
 src/
-├── config/              # Конфігурація додатку
-├── user/               # Модуль користувачів
-│   ├── schemas/        # MongoDB схеми
-│   └── user.service.ts # Сервіс для роботи з користувачами
-├── google-sheets/      # Модуль Google Sheets
-├── telegram/           # Telegram бот модуль
-│   ├── interfaces/     # Інтерфейси
-│   ├── keyboards/      # Клавіатури бота
-│   ├── services/       # Сервіси бота
-│   └── telegram.service.ts # Основний сервіс бота
-├── app.module.ts       # Головний модуль
-└── main.ts            # Точка входу
-```
+├── main.ts                          # bootstrap
+├── app.module.ts                    # PrismaModule + ConfigModule + ThrottlerModule + бізнес-модулі
+├── config/configuration.ts          # порт, telegram.apiKey, googleSheets.apiKey
+├── prisma/
+│   ├── prisma.module.ts             # @Global модуль
+│   └── prisma.service.ts            # PrismaClient через @prisma/adapter-pg
+├── user/
+│   ├── user.module.ts
+│   └── user.service.ts              # findByTelegramId, upsertUser, setGoogleSheetsUrl
+├── google-sheets/
+│   ├── google-sheets.module.ts
+│   └── google-sheets.service.ts     # тягне B:F, фільтрує по F-маркеру
+└── telegram/
+    ├── telegram.module.ts
+    ├── telegram.service.ts          # всі бот-handlers
+    ├── interfaces/bot-context.interface.ts
+    ├── keyboards/main-menu.keyboard.ts
+    └── services/
+        ├── words.service.ts         # getRandomWord(mode), markLearned, getStats
+        └── sync.service.ts          # syncWords: diff Sheet vs DB у транзакції
 
-## Особливості реалізації
+prisma/
+├── schema.prisma                    # User + Word
+└── migrations/                      # SQL міграції
 
-### Кешування даних
-- Дані з Google Sheets кешуються в MongoDB
-- Оновлення відбувається автоматично кожну годину
-- Кеш зберігає час останнього оновлення
-
-### Відстеження прогресу
-- Система запам'ятовує показані слова для кожного користувача
-- Прогрес зберігається окремо для англійських слів та перекладів
-- Після показу всіх слів прогрес скидається автоматично
-
-### Безпека
-- Підтримка rate limiting через @nestjs/throttler
-- Валідація вхідних даних
-- Безпечна робота з MongoDB через Mongoose
-
-## Команди npm
-
-```bash
-npm run start:dev      # Запуск в режимі розробки
-npm run start:prod     # Запуск продакшн версії
-npm run build          # Збірка проекту
-npm run lint           # Перевірка коду
-npm run test           # Запуск тестів
+docker/
+├── docker-compose.yml               # postgres:16-alpine для dev
+└── README.md
 ```
 
 ## Вимоги
 
-- Node.js 18+ 
-- MongoDB 4.4+
+- Node.js 18+
+- PostgreSQL 14+
 - Telegram Bot Token
-- Google Sheets таблиця (публічна)
-
-## Підтримка
-
-При виникненні проблем:
-1. Переконайтеся що всі змінні середовища налаштовані
-2. Перевірте що MongoDB запущений
-3. Переконайтеся що Google Sheets таблиця публічна
-4. Перевірте формат даних в таблиці (колонки B та D)
-
-## Ліцензія
-
-MIT
+- Google Sheets API Key
