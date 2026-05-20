@@ -94,9 +94,10 @@ export class TelegramService implements OnModuleInit {
 
       await ctx.reply(
         `📖 Меню навчання\n\n` +
-          `📊 Слів: ${stats.total} | ✅ вивчено: ${stats.learned}\n` +
-          `🔁 Поточний EN-цикл: ${stats.passedInCurrentEnCycle} / ${stats.total - stats.learned}\n` +
-          `🔁 Поточний UK-цикл: ${stats.passedInCurrentUkCycle} / ${stats.total - stats.learned}\n\n` +
+          `📊 Слів: ${stats.total}\n` +
+          `✅ Вивчено 🇺🇸→🇺🇦: ${stats.learnedEn} | 🇺🇦→🇺🇸: ${stats.learnedUk}\n` +
+          `🔁 Цикл 🇺🇸: ${stats.passedInCurrentEnCycle} / ${stats.notLearnedEn}\n` +
+          `🔁 Цикл 🇺🇦: ${stats.passedInCurrentUkCycle} / ${stats.notLearnedUk}\n\n` +
           `💡 Натисніть на заблюрений текст, щоб його розкрити!`,
         learningMenuKeyboard(),
       );
@@ -180,10 +181,11 @@ export class TelegramService implements OnModuleInit {
         return;
       }
       const text = learned
-        .map((w, i) => `${i + 1}. ${w.english} — ${w.translation}`)
+        .map((w, i) => `${i + 1}. ${this.learnedLabel(w)} — ${w.translation}`)
         .join('\n');
       await ctx.reply(
-        `📋 Ваші вивчені слова (${learned.length}):\n\n${text}`,
+        `📋 Ваші вивчені слова (${learned.length}):\n` +
+          `🇺🇸 = тільки EN→UK, 🇺🇦 = тільки UK→EN, 🇺🇸🇺🇦 = обидва напрямки\n\n${text}`,
         learnedWordsKeyboard(),
       );
     });
@@ -208,7 +210,8 @@ export class TelegramService implements OnModuleInit {
       const stats = await this.wordsService.getStats(BigInt(ctx.from.id));
       await ctx.reply(
         `📖 Меню навчання\n\n` +
-          `📊 Слів: ${stats.total} | ✅ вивчено: ${stats.learned}`,
+          `📊 Слів: ${stats.total}\n` +
+          `✅ Вивчено 🇺🇸→🇺🇦: ${stats.learnedEn} | 🇺🇦→🇺🇸: ${stats.learnedUk}`,
         learningMenuKeyboard(),
       );
     });
@@ -271,15 +274,20 @@ export class TelegramService implements OnModuleInit {
       const data = ctx.callbackQuery.data;
 
       if (data.startsWith('learned_')) {
-        const wordId = data.slice('learned_'.length);
+        // format: learned_<wordId>_<mode>
+        const rest = data.slice('learned_'.length);
+        const lastSep = rest.lastIndexOf('_');
+        const wordId = rest.slice(0, lastSep);
+        const mode = rest.slice(lastSep + 1) as LearningMode;
+        const dirLabel = mode === 'en' ? '🇺🇸→🇺🇦' : '🇺🇦→🇺🇸';
         try {
-          await this.wordsService.markLearned(wordId);
+          await this.wordsService.markLearned(wordId, mode);
           await ctx.editMessageReplyMarkup({
             inline_keyboard: [
-              [{ text: '✅ Додано до вивчених!', callback_data: 'noop' }],
+              [{ text: `✅ Вивчено (${dirLabel})`, callback_data: 'noop' }],
             ],
           });
-          await ctx.answerCbQuery('✅ Додано до вивчених!');
+          await ctx.answerCbQuery(`✅ Позначено вивченим у напрямку ${dirLabel}`);
         } catch {
           await ctx.answerCbQuery('❌ Слово вже не існує');
         }
@@ -358,7 +366,7 @@ export class TelegramService implements OnModuleInit {
           parse_mode: 'MarkdownV2',
           reply_markup: {
             inline_keyboard: [
-              [{ text: '✅ Вивчено', callback_data: `learned_${word.id}` }],
+              [{ text: '✅ Вивчено', callback_data: `learned_${word.id}_${mode}` }],
             ],
           },
         },
@@ -371,10 +379,10 @@ export class TelegramService implements OnModuleInit {
   private buildLearnedRemoveKeyboard(words: Word[]) {
     const keyboard: { text: string; callback_data: string }[][] = [];
     for (let i = 0; i < words.length; i += 2) {
-      const row = [{ text: `❌ ${words[i].english}`, callback_data: `remove_${words[i].id}` }];
+      const row = [{ text: `❌ ${this.learnedLabel(words[i])}`, callback_data: `remove_${words[i].id}` }];
       if (words[i + 1]) {
         row.push({
-          text: `❌ ${words[i + 1].english}`,
+          text: `❌ ${this.learnedLabel(words[i + 1])}`,
           callback_data: `remove_${words[i + 1].id}`,
         });
       }
@@ -383,6 +391,14 @@ export class TelegramService implements OnModuleInit {
     keyboard.push([{ text: '🗑️ Очистити все', callback_data: 'clear_all_learned' }]);
     keyboard.push([{ text: '⬅️ Назад', callback_data: 'back_to_learned_menu' }]);
     return keyboard;
+  }
+
+  private learnedLabel(w: Word): string {
+    let flags = '';
+    if (w.learnedEn && w.learnedUk) flags = '🇺🇸🇺🇦';
+    else if (w.learnedEn) flags = '🇺🇸';
+    else flags = '🇺🇦';
+    return `${flags} ${w.english}`;
   }
 
   private formatSyncResult(r: SyncResult): string {

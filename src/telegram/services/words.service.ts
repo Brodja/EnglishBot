@@ -6,10 +6,18 @@ export type LearningMode = 'en' | 'uk';
 
 export interface WordStats {
   total: number;
-  learned: number;
+  learnedEn: number;
+  learnedUk: number;
   passedInCurrentEnCycle: number;
   passedInCurrentUkCycle: number;
+  notLearnedEn: number;
+  notLearnedUk: number;
 }
+
+const FIELDS = {
+  en: { passed: 'passedEn', learned: 'learnedEn' },
+  uk: { passed: 'passedUk', learned: 'learnedUk' },
+} as const;
 
 @Injectable()
 export class WordsService {
@@ -18,38 +26,39 @@ export class WordsService {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
-   * Випадкове слово з тих, що ще не пройдені в поточному циклі режиму.
-   * Коли всі не-вивчені слова в цьому режимі позначені passed — скидаємо цикл і повторюємо вибірку.
+   * Випадкове слово з тих, що не вивчені у цьому напрямку і ще не пройдені в поточному циклі.
+   * Коли всі непройдені вичерпались — скидаємо passed-мітку і починаємо нове коло.
    */
   async getRandomWord(telegramId: bigint, mode: LearningMode): Promise<Word> {
-    const passedField = mode === 'en' ? 'passedEn' : 'passedUk';
+    const { passed: passedField, learned: learnedField } = FIELDS[mode];
 
     const availableWhere = {
       userId: telegramId,
-      learned: false,
+      [learnedField]: false,
       [passedField]: false,
     };
 
     let count = await this.prisma.word.count({ where: availableWhere });
 
     if (count === 0) {
-      const totalNonLearned = await this.prisma.word.count({
-        where: { userId: telegramId, learned: false },
+      const totalNotLearned = await this.prisma.word.count({
+        where: { userId: telegramId, [learnedField]: false },
       });
 
-      if (totalNonLearned === 0) {
+      if (totalNotLearned === 0) {
         throw new Error(
-          'Немає слів для навчання. Натисніть "🔄 Синхронізувати" або зніміть мітки "вивчено".',
+          `Немає слів для напрямку "${mode === 'en' ? '🇺🇸 → 🇺🇦' : '🇺🇦 → 🇺🇸'}". ` +
+            `Натисніть "🔄 Синхронізувати" або зніміть мітки "вивчено".`,
         );
       }
 
       this.logger.log(`Скидаємо цикл ${mode} для user ${telegramId}`);
       await this.prisma.word.updateMany({
-        where: { userId: telegramId, learned: false },
+        where: { userId: telegramId, [learnedField]: false },
         data: { [passedField]: false },
       });
 
-      count = totalNonLearned;
+      count = totalNotLearned;
     }
 
     const skip = Math.floor(Math.random() * count);
@@ -70,52 +79,76 @@ export class WordsService {
     return word;
   }
 
-  async markLearned(wordId: string): Promise<void> {
+  /**
+   * Вивчене слово в напрямку, у якому його показали.
+   * EN-напрямок і UK-напрямок незалежні.
+   */
+  async markLearned(wordId: string, mode: LearningMode): Promise<void> {
+    const { learned: learnedField } = FIELDS[mode];
     await this.prisma.word.update({
       where: { id: wordId },
-      data: { learned: true },
+      data: { [learnedField]: true },
     });
   }
 
+  /**
+   * Знімає мітку "вивчено" з обох напрямків — слово знову потрапить у навчання.
+   */
   async unmarkLearned(wordId: string): Promise<void> {
     await this.prisma.word.update({
       where: { id: wordId },
-      data: { learned: false },
+      data: { learnedEn: false, learnedUk: false },
     });
   }
 
+  /**
+   * Знімає "вивчено" з усіх слів юзера (обидва напрямки).
+   */
   async clearAllLearned(telegramId: bigint): Promise<number> {
     const result = await this.prisma.word.updateMany({
-      where: { userId: telegramId, learned: true },
-      data: { learned: false },
+      where: {
+        userId: telegramId,
+        OR: [{ learnedEn: true }, { learnedUk: true }],
+      },
+      data: { learnedEn: false, learnedUk: false },
     });
     return result.count;
   }
 
+  /**
+   * Список усіх слів, які вивчені хоч в одному напрямку.
+   */
   async getLearnedWords(telegramId: bigint): Promise<Word[]> {
     return this.prisma.word.findMany({
-      where: { userId: telegramId, learned: true },
+      where: {
+        userId: telegramId,
+        OR: [{ learnedEn: true }, { learnedUk: true }],
+      },
       orderBy: { english: 'asc' },
     });
   }
 
   async getStats(telegramId: bigint): Promise<WordStats> {
-    const [total, learned, passedEn, passedUk] = await Promise.all([
+    const [total, learnedEn, learnedUk, passedEn, passedUk] = await Promise.all([
       this.prisma.word.count({ where: { userId: telegramId } }),
-      this.prisma.word.count({ where: { userId: telegramId, learned: true } }),
+      this.prisma.word.count({ where: { userId: telegramId, learnedEn: true } }),
+      this.prisma.word.count({ where: { userId: telegramId, learnedUk: true } }),
       this.prisma.word.count({
-        where: { userId: telegramId, learned: false, passedEn: true },
+        where: { userId: telegramId, learnedEn: false, passedEn: true },
       }),
       this.prisma.word.count({
-        where: { userId: telegramId, learned: false, passedUk: true },
+        where: { userId: telegramId, learnedUk: false, passedUk: true },
       }),
     ]);
 
     return {
       total,
-      learned,
+      learnedEn,
+      learnedUk,
       passedInCurrentEnCycle: passedEn,
       passedInCurrentUkCycle: passedUk,
+      notLearnedEn: total - learnedEn,
+      notLearnedUk: total - learnedUk,
     };
   }
 }

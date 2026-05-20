@@ -29,9 +29,12 @@ model Word {
   english     String
   translation String
 
-  passedEn    Boolean  @default(false)
-  passedUk    Boolean  @default(false)
-  learned     Boolean  @default(false)
+  passedEn       Boolean @default(false)
+  passedUk       Boolean @default(false)
+  learnedEn      Boolean @default(false)
+  learnedUk      Boolean @default(false)
+  reviewCountEn  Int     @default(0)
+  reviewCountUk  Int     @default(0)
 
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -39,7 +42,9 @@ model Word {
   user        User     @relation(fields: [userId], references: [telegramId], onDelete: Cascade)
 
   @@unique([userId, english])
-  @@index([userId, learned, passedEn])
-  @@index([userId, learned, passedUk])
+  @@index([userId, learnedEn, passedEn])
+  @@index([userId, learnedUk, passedUk])
+  @@index([userId, learnedEn, reviewCountEn])
+  @@index([userId, learnedUk, reviewCountUk])
   @@map("words")
 }
