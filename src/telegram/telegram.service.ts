@@ -93,7 +93,7 @@ export class TelegramService implements OnModuleInit {
       );
     });
 
-    this.bot.hears('📚 Перейти до навчання', async (ctx) => {
+    this.bot.hears('📚 Навчання', async (ctx) => {
       const user = await this.userService.findByTelegramId(BigInt(ctx.from.id));
       if (!user?.googleSheetsUrl) {
         await ctx.reply(
@@ -123,7 +123,7 @@ export class TelegramService implements OnModuleInit {
       );
     });
 
-    this.bot.hears('🔗 Додати посилання', async (ctx) => {
+    this.bot.hears('🔗 Моя таблиця', async (ctx) => {
       const user = await this.userService.findByTelegramId(BigInt(ctx.from.id));
 
       if (user?.googleSheetsUrl) {
@@ -175,14 +175,10 @@ export class TelegramService implements OnModuleInit {
       }
     });
 
-    this.bot.hears('🇺🇸 Отримати англійське слово', (ctx) =>
-      this.handleGetWord(ctx, 'en'),
-    );
-    this.bot.hears('🇺🇦 Отримати переклад', (ctx) =>
-      this.handleGetWord(ctx, 'uk'),
-    );
+    this.bot.hears('🇺🇸 Англійське', (ctx) => this.handleGetWord(ctx, 'en'));
+    this.bot.hears('🇺🇦 Український', (ctx) => this.handleGetWord(ctx, 'uk'));
 
-    this.bot.hears('🔁 Перейти до повторення', async (ctx) => {
+    this.bot.hears('🔁 Повторення', async (ctx) => {
       const stats = await this.wordsService.getReviewStats(BigInt(ctx.from.id));
       if (stats.learnedEn === 0 && stats.learnedUk === 0) {
         await ctx.reply(
@@ -202,10 +198,10 @@ export class TelegramService implements OnModuleInit {
       );
     });
 
-    this.bot.hears('🇺🇸 Повторити англійське', (ctx) => this.handleReviewWord(ctx, 'en'));
-    this.bot.hears('🇺🇦 Повторити переклад', (ctx) => this.handleReviewWord(ctx, 'uk'));
+    this.bot.hears('🔁🇺🇸 Англійське', (ctx) => this.handleReviewWord(ctx, 'en'));
+    this.bot.hears('🔁🇺🇦 Український', (ctx) => this.handleReviewWord(ctx, 'uk'));
 
-    this.bot.hears('📚 Керувати вивченими словами', async (ctx) => {
+    this.bot.hears('📚 Вивчені', async (ctx) => {
       const learned = await this.wordsService.getLearnedWords(
         BigInt(ctx.from.id),
       );
@@ -215,7 +211,7 @@ export class TelegramService implements OnModuleInit {
       );
     });
 
-    this.bot.hears('📋 Показати вивчені слова', async (ctx) => {
+    this.bot.hears('📋 Усі вивчені', async (ctx) => {
       const learned = await this.wordsService.getLearnedWords(
         BigInt(ctx.from.id),
       );
@@ -233,7 +229,7 @@ export class TelegramService implements OnModuleInit {
       );
     });
 
-    this.bot.hears('🗑️ Видалити вивчені слова', async (ctx) => {
+    this.bot.hears('🗑️ Видалити', async (ctx) => {
       const learned = await this.wordsService.getLearnedWords(
         BigInt(ctx.from.id),
       );
@@ -249,7 +245,7 @@ export class TelegramService implements OnModuleInit {
       });
     });
 
-    this.bot.hears('⬅️ Назад до навчання', async (ctx) => {
+    this.bot.hears('⬅️ До навчання', async (ctx) => {
       const stats = await this.wordsService.getStats(BigInt(ctx.from.id));
       await ctx.reply(
         `📖 Меню навчання\n\n` +
@@ -274,7 +270,7 @@ export class TelegramService implements OnModuleInit {
       });
     });
 
-    this.bot.hears('📨 Запропонувати / баг', async (ctx) => {
+    this.bot.hears('📬 Зворотний зв\'язок', async (ctx) => {
       await ctx.reply(
         '📨 Напишіть ваше повідомлення (баг чи побажання).\n\n' +
           'Воно піде розробнику. Обмеження — 1 повідомлення на годину.',

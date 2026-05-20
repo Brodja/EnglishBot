@@ -2,27 +2,27 @@ import { Markup } from 'telegraf';
 
 export const mainMenuKeyboard = (isAdmin = false) => {
   const rows: string[][] = [
-    ['📚 Перейти до навчання', '🔁 Перейти до повторення'],
-    ['🔄 Синхронізувати', '🔗 Додати посилання'],
+    ['📚 Навчання', '🔁 Повторення'],
+    ['🔄 Синхронізувати', '🔗 Моя таблиця'],
     ['ℹ️ Допомога', '📝 Оновлення'],
-    ['📨 Запропонувати / баг'],
+    ['📬 Зворотний зв\'язок'],
   ];
   if (isAdmin) rows.push(['📥 Повідомлення', '📢 Анонсувати']);
   return Markup.keyboard(rows).resize().persistent();
 };
 
-export const reviewMenuKeyboard = () =>
+export const learningMenuKeyboard = () =>
   Markup.keyboard([
-    ['🇺🇸 Повторити англійське', '🇺🇦 Повторити переклад'],
+    ['🇺🇸 Англійське', '🇺🇦 Український'],
+    ['📚 Вивчені', '🔄 Синхронізувати'],
     ['⬅️ Назад'],
   ])
     .resize()
     .persistent();
 
-export const learningMenuKeyboard = () =>
+export const reviewMenuKeyboard = () =>
   Markup.keyboard([
-    ['🇺🇸 Отримати англійське слово', '🇺🇦 Отримати переклад'],
-    ['📚 Керувати вивченими словами', '🔄 Синхронізувати'],
+    ['🔁🇺🇸 Англійське', '🔁🇺🇦 Український'],
     ['⬅️ Назад'],
   ])
     .resize()
@@ -30,8 +30,8 @@ export const learningMenuKeyboard = () =>
 
 export const learnedWordsKeyboard = () =>
   Markup.keyboard([
-    ['📋 Показати вивчені слова', '🗑️ Видалити вивчені слова'],
-    ['⬅️ Назад до навчання'],
+    ['📋 Усі вивчені', '🗑️ Видалити'],
+    ['⬅️ До навчання'],
   ])
     .resize()
     .persistent();
