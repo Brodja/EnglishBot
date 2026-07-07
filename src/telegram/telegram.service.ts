@@ -189,11 +189,9 @@ export class TelegramService implements OnModuleInit {
       }
       await ctx.reply(
         `🔁 Меню повторення\n\n` +
-          `🇺🇸 Вивчених: ${stats.learnedEn}` +
-          (stats.minReviewCountEn !== null ? ` (рівень: ${stats.minReviewCountEn})` : '') +
-          `\n🇺🇦 Вивчених: ${stats.learnedUk}` +
-          (stats.minReviewCountUk !== null ? ` (рівень: ${stats.minReviewCountUk})` : '') +
-          `\n\n💡 Випадає слово з найменшим лічильником повторень.`,
+          `🇺🇸 Вивчених: ${stats.learnedEn} (залишилось у колі: ${stats.remainingEn})\n` +
+          `🇺🇦 Вивчених: ${stats.learnedUk} (залишилось у колі: ${stats.remainingUk})\n\n` +
+          `💡 Слова випадають випадково. Коли пройдеш усі — коло почнеться заново.`,
         reviewMenuKeyboard(),
       );
     });
@@ -499,17 +497,23 @@ export class TelegramService implements OnModuleInit {
 
   private async handleReviewWord(ctx: BotContext, mode: LearningMode) {
     try {
-      const word = await this.wordsService.getReviewWord(BigInt(ctx.from.id), mode);
+      const { word, cycleReset } = await this.wordsService.getReviewWord(
+        BigInt(ctx.from.id),
+        mode,
+      );
       const front = mode === 'en' ? word.english : word.translation;
       const back = mode === 'en' ? word.translation : word.english;
       const frontFlag = mode === 'en' ? '🇺🇸' : '🇺🇦';
       const backFlag = mode === 'en' ? '🇺🇦' : '🇺🇸';
-      const count = mode === 'en' ? word.reviewCountEn : word.reviewCountUk;
+
+      const header = cycleReset
+        ? '🎉 Ти повторив усі слова у цьому напрямку\\! Починаємо нове коло\\.\n\n'
+        : '';
 
       await ctx.reply(
-        `${frontFlag} *${this.escapeMarkdownV2(front)}*\n\n` +
-          `${backFlag} ||${this.escapeMarkdownV2(back)}||\n\n` +
-          `🔁 Повторень: ${count}`,
+        header +
+          `${frontFlag} *${this.escapeMarkdownV2(front)}*\n\n` +
+          `${backFlag} ||${this.escapeMarkdownV2(back)}||`,
         {
           parse_mode: 'MarkdownV2',
           reply_markup: {
@@ -526,7 +530,7 @@ export class TelegramService implements OnModuleInit {
 
   private async handleGetWord(ctx: BotContext, mode: LearningMode) {
     try {
-      const word = await this.wordsService.getRandomWord(
+      const { word, cycleReset } = await this.wordsService.getRandomWord(
         BigInt(ctx.from.id),
         mode,
       );
@@ -535,8 +539,13 @@ export class TelegramService implements OnModuleInit {
       const frontFlag = mode === 'en' ? '🇺🇸' : '🇺🇦';
       const backFlag = mode === 'en' ? '🇺🇦' : '🇺🇸';
 
+      const header = cycleReset
+        ? '🎉 Ти пройшов усі слова у цьому напрямку\\! Пул скинуто, починаємо нове коло\\.\n\n'
+        : '';
+
       await ctx.reply(
-        `${frontFlag} *${this.escapeMarkdownV2(front)}*\n\n` +
+        header +
+          `${frontFlag} *${this.escapeMarkdownV2(front)}*\n\n` +
           `${backFlag} ||${this.escapeMarkdownV2(back)}||`,
         {
           parse_mode: 'MarkdownV2',

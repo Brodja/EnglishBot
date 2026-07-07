@@ -22,8 +22,9 @@ const FIELDS = {
 export interface ReviewStats {
   learnedEn: number;
   learnedUk: number;
-  minReviewCountEn: number | null;
-  minReviewCountUk: number | null;
+  /** Скільки вивчених слів ще не пройдено в поточному колі повторення (reviewCount = 0). */
+  remainingEn: number;
+  remainingUk: number;
 }
 
 @Injectable()
@@ -35,8 +36,12 @@ export class WordsService {
   /**
    * Випадкове слово з тих, що не вивчені у цьому напрямку і ще не пройдені в поточному циклі.
    * Коли всі непройдені вичерпались — скидаємо passed-мітку і починаємо нове коло.
+   * cycleReset=true означає, що це слово вже з нового кола (усі попередні пройдено).
    */
-  async getRandomWord(telegramId: bigint, mode: LearningMode): Promise<Word> {
+  async getRandomWord(
+    telegramId: bigint,
+    mode: LearningMode,
+  ): Promise<{ word: Word; cycleReset: boolean }> {
     const { passed: passedField, learned: learnedField } = FIELDS[mode];
 
     const availableWhere = {
@@ -46,6 +51,7 @@ export class WordsService {
     };
 
     let count = await this.prisma.word.count({ where: availableWhere });
+    let cycleReset = false;
 
     if (count === 0) {
       const totalNotLearned = await this.prisma.word.count({
@@ -66,6 +72,7 @@ export class WordsService {
       });
 
       count = totalNotLearned;
+      cycleReset = true;
     }
 
     const skip = Math.floor(Math.random() * count);
@@ -83,7 +90,7 @@ export class WordsService {
       data: { [passedField]: true },
     });
 
-    return word;
+    return { word, cycleReset };
   }
 
   /**
@@ -136,38 +143,54 @@ export class WordsService {
   }
 
   /**
-   * Випадкове вивчене слово з мінімальним лічильником повторень у цьому напрямку.
-   * Серед слів з однаковим лічильником — рандом.
+   * Випадкове вивчене слово, яке ще не пройдене в поточному колі повторення (reviewCount = 0).
+   * Коли всі вивчені слова пройдені — скидаємо лічильники на 0 і починаємо нове коло.
+   * cycleReset=true означає, що це слово вже з нового кола (усі попередні пройдено).
    */
-  async getReviewWord(telegramId: bigint, mode: LearningMode): Promise<Word> {
+  async getReviewWord(
+    telegramId: bigint,
+    mode: LearningMode,
+  ): Promise<{ word: Word; cycleReset: boolean }> {
     const { learned: learnedField, review: countField } = FIELDS[mode];
 
-    const minAgg = await this.prisma.word.aggregate({
-      where: { userId: telegramId, [learnedField]: true },
-      _min: { [countField]: true },
-    });
-
-    const minCount = (minAgg._min as Record<string, number | null>)[countField];
-    if (minCount === null || minCount === undefined) {
-      throw new Error(
-        `Немає вивчених слів у напрямку "${mode === 'en' ? '🇺🇸 → 🇺🇦' : '🇺🇦 → 🇺🇸'}". ` +
-          `Спочатку повчіть їх у меню навчання.`,
-      );
-    }
-
-    const where = {
+    const availableWhere = {
       userId: telegramId,
       [learnedField]: true,
-      [countField]: minCount,
+      [countField]: 0,
     };
-    const total = await this.prisma.word.count({ where });
-    const skip = Math.floor(Math.random() * total);
-    const word = await this.prisma.word.findFirst({ where, skip });
+
+    let count = await this.prisma.word.count({ where: availableWhere });
+    let cycleReset = false;
+
+    if (count === 0) {
+      const totalLearned = await this.prisma.word.count({
+        where: { userId: telegramId, [learnedField]: true },
+      });
+
+      if (totalLearned === 0) {
+        throw new Error(
+          `Немає вивчених слів у напрямку "${mode === 'en' ? '🇺🇸 → 🇺🇦' : '🇺🇦 → 🇺🇸'}". ` +
+            `Спочатку повчіть їх у меню навчання.`,
+        );
+      }
+
+      this.logger.log(`Скидаємо коло повторення ${mode} для user ${telegramId}`);
+      await this.prisma.word.updateMany({
+        where: { userId: telegramId, [learnedField]: true },
+        data: { [countField]: 0 },
+      });
+
+      count = totalLearned;
+      cycleReset = true;
+    }
+
+    const skip = Math.floor(Math.random() * count);
+    const word = await this.prisma.word.findFirst({ where: availableWhere, skip });
 
     if (!word) {
       throw new Error('Не вдалося знайти слово для повторення');
     }
-    return word;
+    return { word, cycleReset };
   }
 
   async markReviewed(wordId: string, mode: LearningMode): Promise<void> {
@@ -179,24 +202,17 @@ export class WordsService {
   }
 
   async getReviewStats(telegramId: bigint): Promise<ReviewStats> {
-    const [learnedEn, learnedUk, minEn, minUk] = await Promise.all([
+    const [learnedEn, learnedUk, remainingEn, remainingUk] = await Promise.all([
       this.prisma.word.count({ where: { userId: telegramId, learnedEn: true } }),
       this.prisma.word.count({ where: { userId: telegramId, learnedUk: true } }),
-      this.prisma.word.aggregate({
-        where: { userId: telegramId, learnedEn: true },
-        _min: { reviewCountEn: true },
+      this.prisma.word.count({
+        where: { userId: telegramId, learnedEn: true, reviewCountEn: 0 },
       }),
-      this.prisma.word.aggregate({
-        where: { userId: telegramId, learnedUk: true },
-        _min: { reviewCountUk: true },
+      this.prisma.word.count({
+        where: { userId: telegramId, learnedUk: true, reviewCountUk: 0 },
       }),
     ]);
-    return {
-      learnedEn,
-      learnedUk,
-      minReviewCountEn: minEn._min.reviewCountEn,
-      minReviewCountUk: minUk._min.reviewCountUk,
-    };
+    return { learnedEn, learnedUk, remainingEn, remainingUk };
   }
 
   async getStats(telegramId: bigint): Promise<WordStats> {
