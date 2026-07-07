@@ -497,7 +497,7 @@ export class TelegramService implements OnModuleInit {
 
   private async handleReviewWord(ctx: BotContext, mode: LearningMode) {
     try {
-      const { word, cycleReset } = await this.wordsService.getReviewWord(
+      const { word, cycleReset, done, total } = await this.wordsService.getReviewWord(
         BigInt(ctx.from.id),
         mode,
       );
@@ -513,7 +513,8 @@ export class TelegramService implements OnModuleInit {
       await ctx.reply(
         header +
           `${frontFlag} *${this.escapeMarkdownV2(front)}*\n\n` +
-          `${backFlag} ||${this.escapeMarkdownV2(back)}||`,
+          `${backFlag} ||${this.escapeMarkdownV2(back)}||\n\n` +
+          `📊 ${done}/${total}`,
         {
           parse_mode: 'MarkdownV2',
           reply_markup: {
@@ -530,7 +531,7 @@ export class TelegramService implements OnModuleInit {
 
   private async handleGetWord(ctx: BotContext, mode: LearningMode) {
     try {
-      const { word, cycleReset } = await this.wordsService.getRandomWord(
+      const { word, cycleReset, done, total } = await this.wordsService.getRandomWord(
         BigInt(ctx.from.id),
         mode,
       );
@@ -546,7 +547,8 @@ export class TelegramService implements OnModuleInit {
       await ctx.reply(
         header +
           `${frontFlag} *${this.escapeMarkdownV2(front)}*\n\n` +
-          `${backFlag} ||${this.escapeMarkdownV2(back)}||`,
+          `${backFlag} ||${this.escapeMarkdownV2(back)}||\n\n` +
+          `📊 ${done}/${total}`,
         {
           parse_mode: 'MarkdownV2',
           reply_markup: {

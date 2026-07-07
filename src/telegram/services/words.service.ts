@@ -41,7 +41,7 @@ export class WordsService {
   async getRandomWord(
     telegramId: bigint,
     mode: LearningMode,
-  ): Promise<{ word: Word; cycleReset: boolean }> {
+  ): Promise<{ word: Word; cycleReset: boolean; done: number; total: number }> {
     const { passed: passedField, learned: learnedField } = FIELDS[mode];
 
     const availableWhere = {
@@ -90,7 +90,17 @@ export class WordsService {
       data: { [passedField]: true },
     });
 
-    return { word, cycleReset };
+    // Прогрес у поточному колі: скільки пройдено (разом із цим словом) з усіх не-вивчених.
+    const [done, total] = await Promise.all([
+      this.prisma.word.count({
+        where: { userId: telegramId, [learnedField]: false, [passedField]: true },
+      }),
+      this.prisma.word.count({
+        where: { userId: telegramId, [learnedField]: false },
+      }),
+    ]);
+
+    return { word, cycleReset, done, total };
   }
 
   /**
@@ -150,7 +160,7 @@ export class WordsService {
   async getReviewWord(
     telegramId: bigint,
     mode: LearningMode,
-  ): Promise<{ word: Word; cycleReset: boolean }> {
+  ): Promise<{ word: Word; cycleReset: boolean; done: number; total: number }> {
     const { learned: learnedField, review: countField } = FIELDS[mode];
 
     const availableWhere = {
@@ -190,7 +200,18 @@ export class WordsService {
     if (!word) {
       throw new Error('Не вдалося знайти слово для повторення');
     }
-    return { word, cycleReset };
+
+    // Прогрес кола повторення: скільки вже повторено (reviewCount>0) з усіх вивчених.
+    const [done, total] = await Promise.all([
+      this.prisma.word.count({
+        where: { userId: telegramId, [learnedField]: true, [countField]: { gt: 0 } },
+      }),
+      this.prisma.word.count({
+        where: { userId: telegramId, [learnedField]: true },
+      }),
+    ]);
+
+    return { word, cycleReset, done, total };
   }
 
   async markReviewed(wordId: string, mode: LearningMode): Promise<void> {
