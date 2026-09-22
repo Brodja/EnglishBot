@@ -501,20 +501,13 @@ export class TelegramService implements OnModuleInit {
         BigInt(ctx.from.id),
         mode,
       );
-      const front = mode === 'en' ? word.english : word.translation;
-      const back = mode === 'en' ? word.translation : word.english;
-      const frontFlag = mode === 'en' ? '🇺🇸' : '🇺🇦';
-      const backFlag = mode === 'en' ? '🇺🇦' : '🇺🇸';
 
       const header = cycleReset
         ? '🎉 Ти повторив усі слова у цьому напрямку\\! Починаємо нове коло\\.\n\n'
         : '';
 
       await ctx.reply(
-        header +
-          `${frontFlag} *${this.escapeMarkdownV2(front)}*\n\n` +
-          `${backFlag} ||${this.escapeMarkdownV2(back)}||\n\n` +
-          `📊 ${done}/${total}`,
+        header + this.buildCardText(word, mode) + `\n\n📊 ${done}/${total}`,
         {
           parse_mode: 'MarkdownV2',
           reply_markup: {
@@ -535,20 +528,13 @@ export class TelegramService implements OnModuleInit {
         BigInt(ctx.from.id),
         mode,
       );
-      const front = mode === 'en' ? word.english : word.translation;
-      const back = mode === 'en' ? word.translation : word.english;
-      const frontFlag = mode === 'en' ? '🇺🇸' : '🇺🇦';
-      const backFlag = mode === 'en' ? '🇺🇦' : '🇺🇸';
 
       const header = cycleReset
         ? '🎉 Ти пройшов усі слова у цьому напрямку\\! Пул скинуто, починаємо нове коло\\.\n\n'
         : '';
 
       await ctx.reply(
-        header +
-          `${frontFlag} *${this.escapeMarkdownV2(front)}*\n\n` +
-          `${backFlag} ||${this.escapeMarkdownV2(back)}||\n\n` +
-          `📊 ${done}/${total}`,
+        header + this.buildCardText(word, mode) + `\n\n📊 ${done}/${total}`,
         {
           parse_mode: 'MarkdownV2',
           reply_markup: {
@@ -561,6 +547,41 @@ export class TelegramService implements OnModuleInit {
     } catch (error) {
       await ctx.reply(`❌ ${error.message}`, learningMenuKeyboard());
     }
+  }
+
+  /**
+   * Текст картки слова (вже екранований під MarkdownV2), без заголовка і лічильника.
+   * Транскрипція (колонка C) — окремим рядком одразу під англійським словом,
+   * щоб довгі слова/фрази не переносились посеред рядка:
+   *  - EN→UK: жирне слово, під ним транскрипція курсивом, нижче переклад у спойлері
+   *  - UK→EN: переклад жирним, нижче слово і транскрипція — кожне у своєму спойлері
+   */
+  private buildCardText(word: Word, mode: LearningMode): string {
+    const en = this.escapeMarkdownV2(word.english);
+    const uk = this.escapeMarkdownV2(word.translation);
+    const ipa = this.formatTranscription(word.transcription);
+    const ipaEsc = ipa ? this.escapeMarkdownV2(ipa) : null;
+
+    if (mode === 'en') {
+      const ipaLine = ipaEsc ? `🔈 _${ipaEsc}_\n` : '';
+      return `🇺🇸 *${en}*\n${ipaLine}\n🇺🇦 ||${uk}||`;
+    }
+
+    const ipaLine = ipaEsc ? `\n🔈 ||_${ipaEsc}_||` : '';
+    return `🇺🇦 *${uk}*\n\n🇺🇸 ||${en}||${ipaLine}`;
+  }
+
+  /**
+   * Нормалізує транскрипцію до вигляду [kəmˈpleɪn]: прибирає зайві дужки/слеші,
+   * які юзер міг сам написати в таблиці. Порожнє значення → null.
+   */
+  private formatTranscription(raw: string | null | undefined): string | null {
+    const inner = (raw ?? '')
+      .trim()
+      .replace(/^[\[\/(|]+/, '')
+      .replace(/[\]\/)|]+$/, '')
+      .trim();
+    return inner ? `[${inner}]` : null;
   }
 
   private buildLearnedRemoveKeyboard(words: Word[]) {

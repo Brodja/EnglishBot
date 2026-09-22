@@ -5,6 +5,8 @@ import { google, sheets_v4 } from 'googleapis';
 export interface WordPair {
   english: string;
   translation: string;
+  /** Транскрипція з колонки C. undefined, якщо клітинка порожня. */
+  transcription?: string;
 }
 
 @Injectable()
@@ -53,14 +55,14 @@ export class GoogleSheetsService {
         const row = rows[i];
         if (row && row.length >= 1) {
           const english = row[0]?.trim(); // Колонка B (індекс 0)
-          const transcription = row[1]?.trim(); // Колонка C (індекс 1) - транскрипція
+          const transcription = row[1]?.trim() || undefined; // Колонка C (індекс 1) - транскрипція
           const translation = row[2]?.trim() || '[переклад відсутній]'; // Колонка D (індекс 2)
           const example = row[3]?.trim(); // Колонка E (індекс 3) - приклади
           const learned = row[4]?.trim(); // Колонка F (індекс 4) - маркер вивчених слів
 
           // Якщо в колонці F є будь-який текст - слово вивчене, ігноруємо його
           if (english && !learned) {
-            wordPairs.push({ english, translation });
+            wordPairs.push({ english, translation, transcription });
           } else if (english && learned) {
             this.logger.log(`Пропускаємо вивчене слово: ${english} (маркер: "${learned}")`);
           }

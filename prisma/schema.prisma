@@ -54,6 +54,8 @@ model Word {
   userId      BigInt
   english     String
   translation String
+  /** Транскрипція з колонки C таблиці. Може бути відсутня. */
+  transcription String?
 
   passedEn       Boolean @default(false)
   passedUk       Boolean @default(false)
